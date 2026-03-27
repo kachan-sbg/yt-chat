@@ -5,34 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>YT Live Chat</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600&family=Barlow+Condensed:wght@700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="chat.css">
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-  :root {
-    --gulf-blue:   #00A3CC;
-    --gulf-orange: #F97316;
-    --text:        #f0f0f0;
-    --text-dim:    rgba(240,240,240,0.5);
-    --msg-bg:      rgba(0,0,0,0.52);
-    --msg-border:  rgba(255,255,255,0.06);
-    --owner:       #F97316;
-    --mod:         #00A3CC;
-    --member:      #a78bfa;
-    --radius:      8px;
-    --font-main:   'Barlow', sans-serif;
-    --font-cond:   'Barlow Condensed', sans-serif;
-  }
-
-  html, body {
-    background: transparent;
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-    font-family: var(--font-main);
-    color: var(--text);
-    font-size: 14px;
-  }
+  body { background: transparent; }
 
   #app {
     display: flex;
@@ -53,69 +28,43 @@
     padding: 10px;
     transition: all .3s;
   }
-  #panel.hidden {
-    display: none;
-  }
+  #panel.hidden { display: none; }
 
-  .panel-row {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-  }
+  .panel-row { display: flex; align-items: center; gap: 7px; }
 
   .panel-label {
-    font-family: var(--font-cond);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: .5px;
-    text-transform: uppercase;
-    color: var(--text-dim);
-    white-space: nowrap;
-    width: 70px;
+    font-size: 11px; font-weight: 700;
+    letter-spacing: .5px; text-transform: uppercase;
+    color: var(--text-dim); white-space: nowrap; width: 70px;
   }
 
   .btn {
-    font-family: var(--font-cond);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: .5px;
-    text-transform: uppercase;
-    padding: 5px 13px;
-    border-radius: 5px;
-    border: none;
-    cursor: pointer;
+    font-size: 12px; font-weight: 700;
+    letter-spacing: .5px; text-transform: uppercase;
+    padding: 5px 13px; border-radius: 5px;
+    border: none; cursor: pointer;
     transition: opacity .15s, transform .1s;
     white-space: nowrap;
   }
   .btn:disabled { opacity: .4; cursor: default; }
-  .btn:not(:disabled):hover   { opacity: .85; }
-  .btn:not(:disabled):active  { transform: scale(.97); }
+  .btn:not(:disabled):hover  { opacity: .85; }
+  .btn:not(:disabled):active { transform: scale(.97); }
 
-  .btn-auth     { background: var(--gulf-orange); color: #fff; }
-  .btn-connect  { background: var(--gulf-blue);   color: #fff; }
-  .btn-sm       { background: rgba(255,255,255,.08); color: var(--text-dim); font-size: 11px; padding: 3px 9px; }
+  .btn-auth    { background: var(--gulf-orange); color: #fff; }
+  .btn-connect { background: var(--gulf-blue);   color: #fff; }
+  .btn-sm      { background: rgba(255,255,255,.08); color: var(--text-dim); font-size: 11px; padding: 3px 9px; }
 
   /* ── STATUS BAR ── */
   #status-bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-family: var(--font-cond);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: .4px;
-    text-transform: uppercase;
-    color: var(--text-dim);
-    padding: 0 2px;
-    min-height: 16px;
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 700;
+    letter-spacing: .4px; text-transform: uppercase;
+    color: var(--text-dim); padding: 0 2px; min-height: 16px;
   }
 
   #status-dot {
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: #444;
-    flex-shrink: 0;
-    transition: background .4s;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #444; flex-shrink: 0; transition: background .4s;
   }
   #status-dot.live    { background: #22c55e; box-shadow: 0 0 5px #22c55e; animation: pulse 2s infinite; }
   #status-dot.error   { background: #ef4444; }
@@ -127,118 +76,16 @@
   #status-text { flex: 1; }
   #msg-count   { color: var(--text-dim); font-size: 10px; }
 
-  /* ── CHAT FEED ── */
-  #chat-feed {
-    flex: 1;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-
-  #messages-wrap {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    overflow-y: auto;
-    max-height: 100%;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(255,255,255,.1) transparent;
-  }
-  #messages-wrap::-webkit-scrollbar { width: 2px; }
-  #messages-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 2px; }
-
-  /* ── MESSAGE ── */
-  .msg {
-    display: flex;
-    align-items: flex-start;
-    gap: 7px;
-    background: var(--msg-bg);
-    border: 1px solid var(--msg-border);
-    border-left: 3px solid transparent;
-    border-radius: var(--radius);
-    padding: 6px 9px;
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-    animation: slideIn .22s ease-out both;
-  }
-  .msg.is-owner  { border-left-color: var(--owner); }
-  .msg.is-mod    { border-left-color: var(--mod); }
-  .msg.is-member { border-left-color: var(--member); }
-
-  @keyframes slideIn {
-    from { opacity: 0; transform: translateY(8px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-
-  .msg-avatar {
-    width: 24px; height: 24px;
-    border-radius: 50%;
-    object-fit: cover;
-    flex-shrink: 0;
-    border: 1.5px solid rgba(255,255,255,.08);
-  }
-
-  .msg-body { flex: 1; min-width: 0; }
-
-  .msg-header {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin-bottom: 2px;
-  }
-
-  .msg-author {
-    font-family: var(--font-cond);
-    font-weight: 700;
-    font-size: 12px;
-    letter-spacing: .3px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 140px;
-  }
-
-  .badge {
-    font-family: var(--font-cond);
-    font-size: 8px;
-    font-weight: 700;
-    letter-spacing: .4px;
-    text-transform: uppercase;
-    padding: 1px 4px;
-    border-radius: 3px;
-    flex-shrink: 0;
-  }
-  .badge-owner  { background: var(--owner);  color: #fff; }
-  .badge-mod    { background: var(--mod);    color: #fff; }
-  .badge-member { background: var(--member); color: #fff; }
-
-  .msg-time {
-    font-size: 9px;
-    color: var(--text-dim);
-    margin-left: auto;
-    flex-shrink: 0;
-  }
-
-  .msg-text {
-    font-size: 13px;
-    line-height: 1.4;
-    word-break: break-word;
-  }
-
   /* ── EMPTY STATE ── */
   #empty-state {
-    text-align: center;
-    color: var(--text-dim);
-    font-size: 12px;
-    padding: 20px 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
+    text-align: center; color: var(--text-dim);
+    font-size: 12px; padding: 20px 0;
+    display: flex; flex-direction: column;
+    align-items: center; gap: 6px;
   }
   #empty-state .icon { font-size: 24px; opacity: .4; }
 
-  /* ── OVERLAY MODE (для OBS / Transparent chat без UI) ── */
+  /* ── OVERLAY MODE ── */
   body.overlay-mode #panel,
   body.overlay-mode #status-bar { display: none !important; }
 </style>
@@ -248,13 +95,11 @@
 
   <!-- CONTROL PANEL -->
   <div id="panel">
-    <!-- Auth row -->
     <div class="panel-row" id="row-auth">
       <span class="panel-label">Акаунт</span>
       <button class="btn btn-auth" id="btn-auth" onclick="startAuth()">🔑 Авторизуватись</button>
       <button class="btn btn-sm"   id="btn-logout" onclick="logout()" style="display:none">Вийти</button>
     </div>
-    <!-- Connect row -->
     <div class="panel-row" id="row-connect" style="display:none">
       <span class="panel-label">Стрім</span>
       <button class="btn btn-connect" id="btn-connect" onclick="connectChat()">▶ Підключити</button>
@@ -282,12 +127,26 @@
 </div>
 <script>
 // ── CONFIG ────────────────────────────────────────────────────────────────────
-const SERVER  = 'http://localhost:3456';
-const POLL_MS = 4000;
+const SERVER   = 'http://localhost:3456';
+const POLL_MS  = 4000;
 const MAX_MSGS = 80;
 
 const isOverlay = new URLSearchParams(location.search).get('overlay') === '1';
 if (isOverlay) document.body.classList.add('overlay-mode');
+
+// ── AUTHOR COLORS ─────────────────────────────────────────────────────────────
+const AUTHOR_COLORS = Array.from({length: 30}, (_, i) =>
+  `hsl(${(i * 12) % 360}, 70%, 82%)`
+);
+const authorColorMap = {};
+let colorIndex = 0;
+
+function getAuthorColor(author) {
+  if (!authorColorMap[author]) {
+    authorColorMap[author] = AUTHOR_COLORS[colorIndex++ % AUTHOR_COLORS.length];
+  }
+  return authorColorMap[author];
+}
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let pollInterval  = null;
@@ -301,7 +160,6 @@ const $statusTx  = document.getElementById('status-text');
 const $msgCount  = document.getElementById('msg-count');
 const $wrap      = document.getElementById('messages-wrap');
 const $empty     = document.getElementById('empty-state');
-const $panel     = document.getElementById('panel');
 const $btnAuth   = document.getElementById('btn-auth');
 const $btnLogout = document.getElementById('btn-logout');
 const $rowConn   = document.getElementById('row-connect');
@@ -316,16 +174,11 @@ function setStatus(state, text) {
 
 // ── AUTH ──────────────────────────────────────────────────────────────────────
 function startAuth() {
-  // Відкриваємо OAuth в нову вкладку; після callback вікно закривається
   window.open(`${SERVER}/auth/start`, '_blank', 'width=500,height=600');
-  // Чекаємо поки юзер авторизується і перевіряємо кожні 2 сек
   setStatus('loading', 'Чекаємо авторизації...');
   const checker = setInterval(async () => {
     const st = await getStatus();
-    if (st?.authorized) {
-      clearInterval(checker);
-      onAuthorized();
-    }
+    if (st?.authorized) { clearInterval(checker); onAuthorized(); }
   }, 2000);
 }
 
@@ -340,8 +193,7 @@ function onAuthorized() {
 
 async function logout() {
   await fetch(`${SERVER}/api/auth/logout`).catch(() => {});
-  authorized = false;
-  connected  = false;
+  authorized = false; connected = false;
   stopPolling();
   $btnAuth.style.display   = 'inline-block';
   $btnLogout.style.display = 'none';
@@ -361,12 +213,10 @@ async function logout() {
 async function connectChat() {
   setStatus('loading', 'Шукаємо активний стрім...');
   $btnConn.disabled = true;
-
   try {
     const res  = await fetch(`${SERVER}/api/connect`);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
-
     connected = true;
     setStatus('live', `Live · ${data.videoId || ''}`);
     $btnConn.style.display = 'none';
@@ -382,8 +232,7 @@ async function connectChat() {
 async function disconnectChat() {
   stopPolling();
   await fetch(`${SERVER}/api/disconnect`).catch(() => {});
-  connected = false;
-  totalMsgCount = 0;
+  connected = false; totalMsgCount = 0;
   $wrap.innerHTML = '';
   $wrap.appendChild($empty);
   $empty.style.display = '';
@@ -410,17 +259,14 @@ async function pollMessages() {
   try {
     const res  = await fetch(`${SERVER}/api/messages`);
     const data = await res.json();
-
     if (!data.connected && connected) {
       setStatus('error', 'Стрім завершився або зʼєднання втрачено');
-      stopPolling();
-      connected = false;
+      stopPolling(); connected = false;
       $btnConn.style.display = 'inline-block';
       $btnConn.disabled      = false;
       $btnDisc.style.display = 'none';
       return;
     }
-
     if (data.messages?.length) appendMessages(data.messages);
   } catch {
     setStatus('error', 'Немає зʼєднання з локальним сервером');
@@ -435,9 +281,9 @@ function appendMessages(msgs) {
 
     totalMsgCount++;
 
-    const el  = document.createElement('div');
+    const el = document.createElement('div');
     el.className = 'msg' +
-      (msg.isOwner     ? ' is-owner'  : '') +
+      (msg.isOwner     ? ' is-owner' : '') +
       (msg.isModerator && !msg.isOwner ? ' is-mod' : '') +
       (msg.isMember    ? ' is-member' : '');
 
@@ -445,29 +291,24 @@ function appendMessages(msgs) {
       .toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
 
     el.innerHTML = `
-      <img class="msg-avatar" src="${esc(msg.authorPhoto)}" alt=""
-           loading="lazy" onerror="this.style.visibility='hidden'">
-      <div class="msg-body">
-        <div class="msg-header">
-          <span class="msg-author">${esc(msg.author)}</span>
-          ${msg.isOwner ? '<span class="badge badge-owner">Стрімер</span>' : ''}
-          ${msg.isModerator && !msg.isOwner ? '<span class="badge badge-mod">Mod</span>' : ''}
-          ${msg.isMember ? '<span class="badge badge-member">Member</span>' : ''}
-          <span class="msg-time">${time}</span>
-        </div>
-        <div class="msg-text">${esc(msg.text)}</div>
-      </div>`;
+      <div class="msg-header">
+        <span class="msg-author" style="color:${getAuthorColor(msg.author)}">${esc(msg.author)}</span>
+        ${msg.isOwner ? '<span class="badge badge-owner">Стрімер</span>' : ''}
+        ${msg.isModerator && !msg.isOwner ? '<span class="badge badge-mod">Мод</span>' : ''}
+        ${msg.isMember ? '<span class="badge badge-member">Учасник</span>' : ''}
+        <span class="msg-time">${time}</span>
+      </div>
+      <div class="msg-text">${esc(msg.text)}</div>`;
 
     $wrap.appendChild(el);
   });
 
-  // Прибираємо старі
   const all = $wrap.querySelectorAll('.msg');
   if (all.length > MAX_MSGS) {
     for (let i = 0; i < all.length - MAX_MSGS; i++) all[i].remove();
   }
 
-  $wrap.scrollTop  = $wrap.scrollHeight;
+  $wrap.scrollTop = $wrap.scrollHeight;
   $msgCount.textContent = `${totalMsgCount} повід.`;
 }
 
@@ -487,16 +328,10 @@ async function getStatus() {
 
 async function init() {
   const st = await getStatus();
-
-  if (!st) {
-    setStatus('error', 'Сервер не запущено · npm start');
-    return;
-  }
+  if (!st) { setStatus('error', 'Сервер не запущено · npm start'); return; }
 
   if (st.authorized) {
     onAuthorized();
-
-    // Якщо сервер вже підключений (перезавантаження сторінки) — відновлюємо
     if (st.connected) {
       connected = true;
       setStatus('live', `Live · ${st.videoId || ''}`);
@@ -509,11 +344,8 @@ async function init() {
     setStatus('', 'Не авторизовано');
   }
 
-  // Overlay-режим: якщо в URL є ?autoconnect=1 — намагаємось підключитись одразу
   if (isOverlay && new URLSearchParams(location.search).get('autoconnect') === '1') {
-    if (st?.authorized && !st?.connected) {
-      setTimeout(connectChat, 1000);
-    }
+    if (st?.authorized && !st?.connected) setTimeout(connectChat, 1000);
   }
 }
 

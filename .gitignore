@@ -8,5 +8,8 @@ tokens.json
 server.log
 server.pid
 
+# Test assets
+assets/
+
 # macOS
 .DS_Store

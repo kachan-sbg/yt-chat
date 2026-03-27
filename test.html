@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<title>YT Chat — Mock Test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="chat.css">
+<style>
+  body { background: url('assets/test/bg.png') center/cover no-repeat; }
+
+  #app {
+    position: fixed;
+    bottom: 0; left: 0;
+    width: 300px; height: 400px;
+    display: flex; flex-direction: column;
+    padding: 8px; gap: 5px;
+  }
+
+  #controls {
+    display: flex; gap: 8px; align-items: center;
+    background: rgba(0,0,0,0.5);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px; padding: 8px 12px;
+    font-size: 14px; color: var(--text-dim);
+  }
+  button {
+    background: rgba(255,255,255,0.1); color: var(--text);
+    border: none; border-radius: 5px; padding: 3px 10px;
+    cursor: pointer; font-size: 14px; font-family: 'Oswald', sans-serif;
+  }
+  button:hover { background: rgba(255,255,255,0.2); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="controls">
+    <span>Mock test</span>
+    <button onclick="clearMessages()">Очистити</button>
+    <button onclick="togglePause()" id="btn-pause">Пауза</button>
+    <span id="count" style="margin-left:auto"></span>
+  </div>
+  <div id="chat-feed">
+    <div id="messages-wrap"></div>
+  </div>
+</div>
+<script>
+const MOCK_MESSAGES = [
+  { author: 'StreamerFan99',    isOwner: false, isModerator: false, isMember: false, text: 'Привіт! Довго чекав цей стрім 🔥' },
+  { author: 'Moderator_Oleh',  isOwner: false, isModerator: true,  isMember: false, text: 'Чат, дотримуємось правил!' },
+  { author: 'Власник каналу',  isOwner: true,  isModerator: false, isMember: false, text: 'Всім привіт, починаємо!' },
+  { author: 'MemberUser',      isOwner: false, isModerator: false, isMember: true,  text: 'Дякую за стрім, вже третій місяць підписки' },
+  { author: 'casual_viewer',   isOwner: false, isModerator: false, isMember: false, text: 'коли буде наступна частина?' },
+  { author: 'Serhii_K',        isOwner: false, isModerator: false, isMember: false, text: 'lol це смішно 😂😂😂' },
+  { author: 'AnnaPlays',       isOwner: false, isModerator: false, isMember: true,  text: 'о це цікаво, я не знала' },
+  { author: 'TrollAccount',    isOwner: false, isModerator: false, isMember: false, text: 'нуднооо' },
+  { author: 'Moderator_Oleh',  isOwner: false, isModerator: true,  isMember: false, text: '@TrollAccount попередження' },
+  { author: 'ukraine_gamer',   isOwner: false, isModerator: false, isMember: false, text: 'хтось ще з Харкова?' },
+  { author: 'Dmytro_V',        isOwner: false, isModerator: false, isMember: false, text: 'gg wp' },
+  { author: 'LongNameUserWithVeryLongName', isOwner: false, isModerator: false, isMember: false, text: 'привіт від довгого нікнейму' },
+  { author: 'Власник каналу',  isOwner: true,  isModerator: false, isMember: false, text: 'Дякую всім за підтримку ❤️' },
+  { author: 'viewer_42',       isOwner: false, isModerator: false, isMember: false, text: 'Це найкращий момент стріму за весь час lmao' },
+  { author: 'MemberUser',      isOwner: false, isModerator: false, isMember: true,  text: '+1' },
+  { author: 'newbie_2024',     isOwner: false, isModerator: false, isMember: false, text: 'перший раз на стрімі, дуже круто!' },
+  { author: 'Moderator_Oleh',  isOwner: false, isModerator: true,  isMember: false, text: 'нагадуємо, донат на ЗСУ в описі' },
+  { author: 'StreamerFan99',   isOwner: false, isModerator: false, isMember: false, text: 'ЛЕСГОУ 🚀🚀🚀' },
+];
+
+const AUTHOR_COLORS = Array.from({length: 30}, (_, i) =>
+  `hsl(${(i * 12) % 360}, 70%, 82%)`
+);
+const authorColorMap = {};
+let colorIndex = 0;
+
+function getAuthorColor(author) {
+  if (!authorColorMap[author]) {
+    authorColorMap[author] = AUTHOR_COLORS[colorIndex++ % AUTHOR_COLORS.length];
+  }
+  return authorColorMap[author];
+}
+
+const MAX_MSGS = 80;
+const $wrap  = document.getElementById('messages-wrap');
+const $count = document.getElementById('count');
+let index = 0, total = 0, paused = false;
+
+function esc(str) {
+  return String(str || '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function addMessage(data) {
+  const time = new Date().toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
+  const el = document.createElement('div');
+  el.className = 'msg' +
+    (data.isOwner     ? ' is-owner' : '') +
+    (data.isModerator && !data.isOwner ? ' is-mod' : '') +
+    (data.isMember    ? ' is-member' : '');
+
+  el.innerHTML = `
+    <div class="msg-header">
+      <span class="msg-author" style="color:${getAuthorColor(data.author)}">${esc(data.author)}</span>
+      ${data.isOwner ? '<span class="badge badge-owner">Стрімер</span>' : ''}
+      ${data.isModerator && !data.isOwner ? '<span class="badge badge-mod">Мод</span>' : ''}
+      ${data.isMember ? '<span class="badge badge-member">Учасник</span>' : ''}
+      <span class="msg-time">${time}</span>
+    </div>
+    <div class="msg-text">${esc(data.text)}</div>`;
+
+  $wrap.appendChild(el);
+  total++;
+
+  const all = $wrap.querySelectorAll('.msg');
+  if (all.length > MAX_MSGS) {
+    for (let i = 0; i < all.length - MAX_MSGS; i++) all[i].remove();
+  }
+
+  $wrap.scrollTop = $wrap.scrollHeight;
+  $count.textContent = `${total} повід.`;
+}
+
+function clearMessages() {
+  $wrap.innerHTML = '';
+  total = 0;
+  $count.textContent = '';
+}
+
+function togglePause() {
+  paused = !paused;
+  document.getElementById('btn-pause').textContent = paused ? 'Продовжити' : 'Пауза';
+}
+
+function tick() {
+  if (!paused) {
+    addMessage(MOCK_MESSAGES[index % MOCK_MESSAGES.length]);
+    index++;
+  }
+  setTimeout(tick, 1500);
+}
+
+tick();
+</script>
+</body>
+</html>
