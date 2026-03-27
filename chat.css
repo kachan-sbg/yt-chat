@@ -12,6 +12,11 @@
   --mod:         #00A3CC;
   --member:      #a78bfa;
   --radius:      8px;
+
+  /* ── Configurable via settings panel ── */
+  --msg-opacity:  0.08;
+  --msg-blur:     3px;
+  --font-scale:   1;
 }
 
 html, body {
@@ -44,13 +49,13 @@ html, body {
 
 /* ── MESSAGE ── */
 .msg {
-  background: rgba(0,0,0,0.08);
+  background: rgba(0,0,0,var(--msg-opacity));
   border: 1px solid var(--msg-border);
   border-left: 3px solid transparent;
   border-radius: var(--radius);
   padding: 6px 9px;
-  backdrop-filter: blur(3px) brightness(0.55);
-  -webkit-backdrop-filter: blur(3px) brightness(0.55);
+  backdrop-filter: blur(var(--msg-blur)) brightness(0.55);
+  -webkit-backdrop-filter: blur(var(--msg-blur)) brightness(0.55);
   animation: slideIn .22s ease-out both;
 }
 .msg.is-owner  { border-left-color: var(--owner); }
@@ -71,7 +76,7 @@ html, body {
 
 .msg-author {
   font-family: 'Alumni Sans', sans-serif;
-  font-size: 22px;
+  font-size: calc(22px * var(--font-scale));
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
@@ -80,7 +85,7 @@ html, body {
 }
 
 .badge {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   font-weight: 700;
   text-transform: uppercase;
   padding: 1px 5px;
@@ -97,14 +102,14 @@ html, body {
 .badge-member { background: var(--member); color: #fff; }
 
 .msg-time {
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale));
   color: var(--text-dim);
   margin-left: auto;
   flex-shrink: 0;
 }
 
 .msg-text {
-  font-size: 18px;
+  font-size: calc(18px * var(--font-scale));
   line-height: 1.4;
   word-break: break-word;
   color: #ffffff;

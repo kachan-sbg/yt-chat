@@ -18,7 +18,19 @@ const oauth2Client = new google.auth.OAuth2(
   cfg.REDIRECT_URI,
 );
 
-const TOKEN_PATH = path.join(__dirname, cfg.TOKEN_FILE);
+const TOKEN_PATH    = path.join(__dirname, cfg.TOKEN_FILE);
+const SETTINGS_PATH = path.join(__dirname, 'settings.json');
+
+const DEFAULT_SETTINGS = { opacity: 0.08, blur: 3, fontSize: 'normal' };
+
+function loadSettings() {
+  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8')) }; }
+  catch { return { ...DEFAULT_SETTINGS }; }
+}
+
+function saveSettings(data) {
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(data, null, 2));
+}
 
 function loadTokens() {
   try {
@@ -42,12 +54,14 @@ oauth2Client.on('tokens', (tokens) => {
 
 const hasTokens = loadTokens();
 
-let liveChatId     = null;
-let nextPageToken  = null;
-let messageBuffer  = [];
-let isPolling      = false;
-let pollTimer      = null;
-let currentVideoId = null;
+let liveChatId          = null;
+let nextPageToken       = null;
+let messageBuffer       = [];
+let isPolling           = false;
+let pollTimer           = null;
+let currentVideoId      = null;
+let autoConnectTimer    = null;
+let isSearchingForStream = false;
 
 const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
 
@@ -116,6 +130,8 @@ function startPolling() {
       console.error('  [Poll]', e.message);
       if (e.message?.includes('liveChatEnded')) {
         isPolling = false; liveChatId = null; currentVideoId = null;
+        console.log('  → Стрім завершився. Очікування наступного...');
+        scheduleAutoConnect();
         return;
       }
     }
@@ -129,7 +145,27 @@ function stopPolling() {
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
 }
 
+async function autoConnect() {
+  if (isPolling || liveChatId) return;
+  isSearchingForStream = true;
+  try {
+    messageBuffer = []; nextPageToken = null;
+    liveChatId = await findActiveLiveChatId();
+    isSearchingForStream = false;
+    startPolling();
+    console.log(`  ✓ Авто-підключення: ${currentVideoId}`);
+  } catch {
+    autoConnectTimer = setTimeout(autoConnect, cfg.AUTO_CONNECT_RETRY_MS);
+  }
+}
+
+function scheduleAutoConnect() {
+  if (autoConnectTimer) { clearTimeout(autoConnectTimer); autoConnectTimer = null; }
+  autoConnectTimer = setTimeout(autoConnect, cfg.AUTO_CONNECT_RETRY_MS);
+}
+
 app.use(cors());
+app.use(express.json());
 app.use(express.static(__dirname));
 
 function requireAuth(req, res, next) {
@@ -145,6 +181,7 @@ app.get('/api/status', (req, res) => {
   res.json({
     authorized:  !!(creds?.access_token || creds?.refresh_token),
     connected:   !!liveChatId,
+    searching:   isSearchingForStream,
     polling:     isPolling,
     videoId:     currentVideoId,
     tokenExpiry: creds?.expiry_date ? new Date(creds.expiry_date).toLocaleTimeString('uk-UA') : null,
@@ -202,8 +239,21 @@ app.get('/api/messages', requireAuth, (req, res) => {
   res.json({ messages, connected: !!liveChatId, videoId: currentVideoId });
 });
 
+app.get('/api/settings', (req, res) => {
+  res.json(loadSettings());
+});
+
+app.post('/api/settings', (req, res) => {
+  const current = loadSettings();
+  const updated = { ...current, ...req.body };
+  saveSettings(updated);
+  res.json(updated);
+});
+
 app.get('/api/disconnect', (req, res) => {
   stopPolling();
+  if (autoConnectTimer) { clearTimeout(autoConnectTimer); autoConnectTimer = null; }
+  isSearchingForStream = false;
   liveChatId = null; nextPageToken = null; messageBuffer = []; currentVideoId = null;
   res.json({ ok: true });
 });
@@ -211,6 +261,10 @@ app.get('/api/disconnect', (req, res) => {
 app.listen(cfg.PORT, () => {
   console.log(`\n  ✓ YT Chat Server: http://localhost:${cfg.PORT}`);
   console.log(`  ✓ Overlay:        http://localhost:${cfg.PORT}/index.html`);
-  if (!hasTokens) console.log(`\n  ⚠ Токени не знайдено. Запусти спочатку: node auth.js\n`);
-  else console.log(`\n  → Сервер готовий!\n`);
+  if (!hasTokens) {
+    console.log(`\n  ⚠ Токени не знайдено. Запусти спочатку: node auth.js\n`);
+  } else {
+    console.log(`\n  → Сервер готовий!\n`);
+    autoConnect();
+  }
 });

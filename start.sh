@@ -156,17 +156,25 @@ cmd_status() {
 
 # ── ЗУПИНИТИ СЕРВЕР ───────────────────────────────────────────────────────────
 cmd_stop() {
-  local pid
-  pid=$(get_server_pid)
-  if [[ -n "$pid" ]]; then
-    warn "Зупиняємо сервер (PID $pid)..."
-    kill "$pid" 2>/dev/null || true
+  # Kill all processes on the port, not just the one in PID file
+  local pids
+  pids=$(lsof -ti "tcp:$PORT" 2>/dev/null || true)
+  if [[ -n "$pids" ]]; then
+    warn "Зупиняємо сервер..."
+    echo "$pids" | xargs kill 2>/dev/null || true
     sleep 0.5
-    rm -f "$PID_FILE"
     ok "Сервер зупинено"
   else
     info "Сервер не запущено"
   fi
+  rm -f "$PID_FILE"
+}
+
+# ── ПЕРЕЗАПУСТИТИ СЕРВЕР ──────────────────────────────────────────────────────
+cmd_restart() {
+  cmd_stop
+  hr
+  cmd_start
 }
 
 # ── ЗАПУСТИТИ СЕРВЕР ──────────────────────────────────────────────────────────
@@ -329,6 +337,7 @@ hr
 case "$CMD" in
   start)      cmd_start ;;
   stop)       cmd_stop ;;
+  restart)    cmd_restart ;;
   auth)       cmd_auth ;;
   status)     cmd_status ;;
   logs)       cmd_logs ;;

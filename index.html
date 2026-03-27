@@ -54,6 +54,34 @@
   .btn-connect { background: var(--gulf-blue);   color: #fff; }
   .btn-sm      { background: rgba(255,255,255,.08); color: var(--text-dim); font-size: 11px; padding: 3px 9px; }
 
+  /* ── SETTINGS PANEL ── */
+  #settings {
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    margin-top: 4px;
+  }
+  #settings.visible { display: flex; }
+
+  .setting-row {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .setting-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .4px; color: var(--text-dim); width: 90px; flex-shrink: 0;
+  }
+  .setting-row input[type=range] {
+    flex: 1; accent-color: var(--gulf-blue); cursor: pointer;
+  }
+  .setting-val {
+    font-size: 11px; color: var(--text-dim); width: 32px; text-align: right; flex-shrink: 0;
+  }
+  .font-btns { display: flex; gap: 4px; flex: 1; }
+  .font-btns .btn-sm { flex: 1; text-align: center; padding: 3px 4px; }
+  .font-btns .btn-sm.active { background: var(--gulf-blue); color: #fff; }
+
   /* ── STATUS BAR ── */
   #status-bar {
     display: flex; align-items: center; gap: 6px;
@@ -104,6 +132,31 @@
       <span class="panel-label">Стрім</span>
       <button class="btn btn-connect" id="btn-connect" onclick="connectChat()">▶ Підключити</button>
       <button class="btn btn-sm"      id="btn-disconn" onclick="disconnectChat()" style="display:none">✕ Відключити</button>
+      <button class="btn btn-sm" onclick="toggleSettings()" id="btn-settings" style="margin-left:auto">⚙</button>
+    </div>
+
+    <!-- SETTINGS -->
+    <div id="settings">
+      <div class="setting-row">
+        <span class="setting-label">Прозорість</span>
+        <input type="range" id="s-opacity" min="0" max="0.5" step="0.01" oninput="applySetting('opacity')">
+        <span class="setting-val" id="v-opacity"></span>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">Розмиття</span>
+        <input type="range" id="s-blur" min="0" max="12" step="0.5" oninput="applySetting('blur')">
+        <span class="setting-val" id="v-blur"></span>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">Шрифт</span>
+        <div class="font-btns">
+          <button class="btn btn-sm" onclick="setFontSize('smallest')">XS</button>
+          <button class="btn btn-sm" onclick="setFontSize('small')">S</button>
+          <button class="btn btn-sm" onclick="setFontSize('normal')">M</button>
+          <button class="btn btn-sm" onclick="setFontSize('big')">L</button>
+          <button class="btn btn-sm" onclick="setFontSize('biggest')">XL</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -260,12 +313,23 @@ async function pollMessages() {
     const res  = await fetch(`${SERVER}/api/messages`);
     const data = await res.json();
     if (!data.connected && connected) {
-      setStatus('error', 'Стрім завершився або зʼєднання втрачено');
-      stopPolling(); connected = false;
+      connected = false;
       $btnConn.style.display = 'inline-block';
       $btnConn.disabled      = false;
       $btnDisc.style.display = 'none';
+    }
+    if (!data.connected && data.searching) {
+      setStatus('loading', 'Шукаємо активний стрім...');
+      $empty.style.display = '';
+      $empty.querySelector('span').textContent = 'Очікуємо початку стріму...';
       return;
+    }
+    if (data.connected && !connected) {
+      connected = true;
+      setStatus('live', `Live · ${data.videoId || ''}`);
+      $btnConn.style.display = 'none';
+      $btnDisc.style.display = 'inline-block';
+      $empty.style.display   = 'none';
     }
     if (data.messages?.length) appendMessages(data.messages);
   } catch {
@@ -318,6 +382,50 @@ function esc(str) {
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// ── SETTINGS ──────────────────────────────────────────────────────────────────
+const FONT_SCALES = { smallest: 0.65, small: 0.83, normal: 1, big: 1.2, biggest: 1.44 };
+const FONT_LABELS = { smallest: 'XS', small: 'S', normal: 'M', big: 'L', biggest: 'XL' };
+
+function applySettings(s) {
+  const root = document.documentElement.style;
+  root.setProperty('--msg-opacity', s.opacity);
+  root.setProperty('--msg-blur', s.blur + 'px');
+  root.setProperty('--font-scale', FONT_SCALES[s.fontSize] ?? 1);
+
+  document.getElementById('s-opacity').value       = s.opacity;
+  document.getElementById('s-blur').value          = s.blur;
+  document.getElementById('v-opacity').textContent = Math.round(s.opacity * 100) + '%';
+  document.getElementById('v-blur').textContent    = s.blur + 'px';
+
+  document.querySelectorAll('.font-btns .btn-sm').forEach(b => {
+    b.classList.toggle('active', b.textContent === FONT_LABELS[s.fontSize]);
+  });
+}
+
+async function saveSetting(patch) {
+  try {
+    const res = await fetch(`${SERVER}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    applySettings(await res.json());
+  } catch { /* server unreachable, ignore */ }
+}
+
+function applySetting(type) {
+  if (type === 'opacity') saveSetting({ opacity: parseFloat(document.getElementById('s-opacity').value) });
+  if (type === 'blur')    saveSetting({ blur:    parseFloat(document.getElementById('s-blur').value) });
+}
+
+function setFontSize(key) {
+  saveSetting({ fontSize: key });
+}
+
+function toggleSettings() {
+  document.getElementById('settings').classList.toggle('visible');
+}
+
 // ── INIT ──────────────────────────────────────────────────────────────────────
 async function getStatus() {
   try {
@@ -339,15 +447,20 @@ async function init() {
       $btnDisc.style.display = 'inline-block';
       $empty.style.display   = 'none';
       startPolling();
+    } else if (st.searching) {
+      setStatus('loading', 'Шукаємо активний стрім...');
+      $empty.querySelector('span').textContent = 'Очікуємо початку стріму...';
+      startPolling();
     }
   } else {
     setStatus('', 'Не авторизовано');
   }
-
-  if (isOverlay && new URLSearchParams(location.search).get('autoconnect') === '1') {
-    if (st?.authorized && !st?.connected) setTimeout(connectChat, 1000);
-  }
 }
+
+fetch(`${SERVER}/api/settings`)
+  .then(r => r.json())
+  .then(applySettings)
+  .catch(() => applySettings({ opacity: 0.08, blur: 3, fontSize: 'normal' }));
 
 init();
 </script>

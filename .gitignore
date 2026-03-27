@@ -3,6 +3,7 @@ node_modules/
 # Local credentials — never commit
 config.local.js
 tokens.json
+settings.json
 
 # Runtime files
 server.log
