@@ -1,0 +1,12 @@
+node_modules/
+
+# Local credentials — never commit
+config.local.js
+tokens.json
+
+# Runtime files
+server.log
+server.pid
+
+# macOS
+.DS_Store

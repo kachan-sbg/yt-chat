@@ -1,0 +1,1 @@
+{"name":"yt-live-chat","version":"2.0.0","description":"YouTube Live Chat overlay","main":"server.js","scripts":{"start":"node server.js","auth":"node auth.js","status":"node auth.js --status"},"dependencies":{"cors":"^2.8.5","express":"^4.18.2","googleapis":"^144.0.0"}}
