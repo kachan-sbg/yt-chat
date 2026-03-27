@@ -54,13 +54,14 @@ oauth2Client.on('tokens', (tokens) => {
 
 const hasTokens = loadTokens();
 
-let liveChatId          = null;
-let nextPageToken       = null;
-let messageBuffer       = [];
-let isPolling           = false;
-let pollTimer           = null;
-let currentVideoId      = null;
-let autoConnectTimer    = null;
+let liveChatId           = null;
+let nextPageToken        = null;
+let messageBuffer        = [];
+let messageHistory       = [];
+let isPolling            = false;
+let pollTimer            = null;
+let currentVideoId       = null;
+let autoConnectTimer     = null;
 let isSearchingForStream = false;
 
 const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
@@ -117,6 +118,9 @@ async function fetchMessages() {
 
   messageBuffer.push(...newMessages);
   if (messageBuffer.length > 500) messageBuffer = messageBuffer.slice(-500);
+
+  messageHistory.push(...newMessages);
+  if (messageHistory.length > cfg.HISTORY_SIZE) messageHistory = messageHistory.slice(-cfg.HISTORY_SIZE);
 }
 
 function startPolling() {
@@ -149,7 +153,7 @@ async function autoConnect() {
   if (isPolling || liveChatId) return;
   isSearchingForStream = true;
   try {
-    messageBuffer = []; nextPageToken = null;
+    messageBuffer = []; messageHistory = []; nextPageToken = null;
     liveChatId = await findActiveLiveChatId();
     isSearchingForStream = false;
     startPolling();
@@ -237,6 +241,10 @@ app.get('/api/messages', requireAuth, (req, res) => {
   const messages = [...messageBuffer];
   messageBuffer  = [];
   res.json({ messages, connected: !!liveChatId, videoId: currentVideoId });
+});
+
+app.get('/api/history', requireAuth, (req, res) => {
+  res.json({ messages: messageHistory });
 });
 
 app.get('/api/settings', (req, res) => {
