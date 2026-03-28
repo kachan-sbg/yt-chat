@@ -18,8 +18,16 @@ module.exports = {
   PORT: 3456,
 
   // ── YouTube polling ───────────────────────────────────────────
-  // Як часто сервер запитує YouTube API (мс). Мінімум 5000.
-  POLL_INTERVAL_MS: 5000,
+  // Minimum interval between YouTube API requests (ms).
+  // YouTube also returns pollingIntervalMillis in each response;
+  // the server uses MAX(this value, YouTube's recommendation, quota-safe interval).
+  // liveChatMessages.list costs 5 quota units. At 10s: ~4320 calls/day × 5 = ~21600 units
+  // which exceeds the default 10000/day limit, so the adaptive logic will slow it down.
+  POLL_INTERVAL_MS: 10_000,
+
+  // Daily YouTube Data API v3 quota limit (units). Default project quota is 10 000.
+  // Increase this if you have requested a higher quota in Google Cloud Console.
+  DAILY_QUOTA_LIMIT: 10_000,
 
   // Як часто шукати активний стрім якщо він ще не запущений (мс).
   AUTO_CONNECT_RETRY_MS: 30_000,

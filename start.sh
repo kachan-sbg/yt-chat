@@ -188,16 +188,17 @@ cmd_start() {
     return
   fi
 
-  # Перевірка токенів
+  # Перевірка токенів — авторизація запускається автоматично
   if [[ ! -f "$APP_DIR/tokens.json" ]]; then
-    warn "tokens.json не знайдено!"
-    info "Спочатку авторизуйся: ./start.sh auth"
-    echo ""
-    read -rp "  Запустити авторизацію зараз? (y/n): " answer
-    if [[ "$answer" == "y" ]]; then
-      cmd_auth
+    warn "tokens.json не знайдено. Запускаємо авторизацію..."
+    hr
+    cmd_auth
+    # Після auth.js перевіряємо чи з'явився файл
+    if [[ ! -f "$APP_DIR/tokens.json" ]]; then
+      err "Авторизація не завершена. Спробуй ще раз: ./start.sh"
+      return 1
     fi
-    return
+    hr
   fi
 
   info "Запускаємо сервер..."
