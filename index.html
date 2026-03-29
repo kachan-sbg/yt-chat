@@ -236,7 +236,7 @@ let pollInterval  = null;
 let totalMsgCount = 0;
 let authorized    = false;
 let connected     = false;
-let lastTimestamp = 0;   // unix ms of last received message; 0 = seed with last 10
+const seenIds = new Set(); // deduplicates messages across polls
 
 // ── ELEMENTS ──────────────────────────────────────────────────────────────────
 const $dot       = document.getElementById('status-dot');
@@ -277,7 +277,7 @@ function onAuthorized() {
 
 async function logout() {
   await fetch(`${SERVER}/api/auth/logout`).catch(() => {});
-  authorized = false; connected = false; lastTimestamp = 0;
+  authorized = false; connected = false; seenIds.clear();
   stopPolling();
   $btnAuth.style.display   = 'inline-block';
   $btnLogout.style.display = 'none';
@@ -316,7 +316,7 @@ async function connectChat() {
 async function disconnectChat() {
   stopPolling();
   await fetch(`${SERVER}/api/disconnect`).catch(() => {});
-  connected = false; totalMsgCount = 0; lastTimestamp = 0;
+  connected = false; totalMsgCount = 0; seenIds.clear();
   $wrap.innerHTML = '';
   $wrap.appendChild($empty);
   $empty.style.display = '';
@@ -341,15 +341,11 @@ function stopPolling() {
 
 async function pollMessages() {
   try {
-    const url  = lastTimestamp > 0
-      ? `${SERVER}/api/messages?since=${lastTimestamp}`
-      : `${SERVER}/api/messages`;
-    const res  = await fetch(url);
+    const res  = await fetch(`${SERVER}/api/messages`);
     const data = await res.json();
 
     if (!data.connected && connected) {
-      connected     = false;
-      lastTimestamp = 0;
+      connected = false;
       $btnConn.style.display = 'inline-block';
       $btnConn.disabled      = false;
       $btnDisc.style.display = 'none';
@@ -367,10 +363,7 @@ async function pollMessages() {
       $btnDisc.style.display = 'inline-block';
       $empty.style.display   = 'none';
     }
-    if (data.messages?.length) {
-      lastTimestamp = Math.max(...data.messages.map(m => new Date(m.timestamp).getTime()));
-      appendMessages(data.messages);
-    }
+    if (data.messages?.length) appendMessages(data.messages);
   } catch {
     setStatus('error', 'Немає зʼєднання з локальним сервером');
   }
@@ -379,6 +372,8 @@ async function pollMessages() {
 // ── RENDER MESSAGES ───────────────────────────────────────────────────────────
 function appendMessages(msgs) {
   msgs.forEach(msg => {
+    if (seenIds.has(msg.id)) return;
+    seenIds.add(msg.id);
     if (msg.type !== 'textMessageEvent' && msg.type !== 'superChatEvent') return;
     if (!msg.text?.trim()) return;
 

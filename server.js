@@ -374,14 +374,8 @@ app.get('/api/connect', requireAuth, async (req, res) => {
   }
 });
 
-// Timestamp-based feed — pass ?since=<unix_ms> to get only newer messages.
-// Omit (or since=0) to seed with the last 10 messages from history.
 app.get('/api/messages', requireAuth, (req, res) => {
-  const since    = parseInt(req.query.since ?? 0, 10);
-  const messages = since > 0
-    ? messageHistory.filter(m => new Date(m.timestamp).getTime() > since)
-    : messageHistory.slice(-10);
-  res.json({ messages, connected: !!liveChatId, searching: isSearchingForStream, videoId: currentVideoId });
+  res.json({ messages: messageHistory, connected: !!liveChatId, searching: isSearchingForStream, videoId: currentVideoId });
 });
 
 app.get('/api/history', requireAuth, (req, res) => {
