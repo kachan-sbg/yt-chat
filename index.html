@@ -117,34 +117,42 @@
   body.obs-mode #status-bar { display: none !important; }
 
   /* ── STREAMER MODE ── */
-  body.streamer-mode { background: rgba(15,15,15,0.95); }
+  body.streamer-mode { background: rgba(10,10,10,0.92); }
   body.streamer-mode #panel { display: flex; }
+  body.streamer-mode #messages-wrap { gap: 1px; }
 
   body.streamer-mode .msg {
-    background: rgba(255,255,255,0.04);
+    background: transparent;
     border: none;
-    border-left: 4px solid rgba(255,255,255,0.12);
-    border-radius: 3px;
+    border-left: 3px solid rgba(255,255,255,0.15);
+    border-radius: 0;
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
     animation: none;
-    padding: 4px 8px;
+    padding: 2px 8px;
   }
   body.streamer-mode .msg.is-owner  { border-left-color: var(--owner); }
   body.streamer-mode .msg.is-mod    { border-left-color: var(--mod); }
   body.streamer-mode .msg.is-member { border-left-color: var(--member); }
+
+  /* Inline layout: Author: message text on one line */
+  body.streamer-mode .msg-header { display: inline; margin: 0; }
   body.streamer-mode .msg-author {
     font-family: system-ui, -apple-system, sans-serif;
     font-size: calc(13px * var(--font-scale));
+    font-weight: 600;
+    max-width: none;
   }
+  body.streamer-mode .badge   { display: none; }
+  body.streamer-mode .msg-time { display: none; }
   body.streamer-mode .msg-text {
-    font-size: calc(14px * var(--font-scale));
+    display: inline;
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: calc(13px * var(--font-scale));
     text-shadow: none;
-    color: rgba(255,255,255,0.88);
+    color: rgba(255,255,255,0.85);
   }
-  body.streamer-mode .badge { font-size: calc(10px * var(--font-scale)); padding: 0 4px; }
-  body.streamer-mode .msg-time { font-size: calc(11px * var(--font-scale)); }
-  body.streamer-mode #messages-wrap { gap: 2px; }
+  body.streamer-mode .msg-text::before { content: ': '; color: rgba(255,255,255,0.35); }
 </style>
 </head>
 <body>
