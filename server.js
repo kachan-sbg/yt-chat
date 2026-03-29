@@ -31,13 +31,25 @@ const SETTINGS_PATH = path.join(__dirname, 'settings.json');
 
 const DEFAULT_SETTINGS = { opacity: 0.08, blur: 3, fontSize: 'normal' };
 
-function loadSettings() {
-  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8')) }; }
-  catch { return { ...DEFAULT_SETTINGS }; }
+function loadSettings(profile = 'default') {
+  try {
+    const data  = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
+    // Migrate old flat format { opacity, blur, fontSize } → { default: {...} }
+    const store = data.opacity !== undefined ? { default: data } : data;
+    return { ...DEFAULT_SETTINGS, ...(store[profile] || {}) };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
 }
 
-function saveSettings(data) {
-  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(data, null, 2));
+function saveSettings(profile = 'default', settings) {
+  let store = {};
+  try {
+    const data = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
+    store = data.opacity !== undefined ? { default: data } : data;
+  } catch {}
+  store[profile] = settings;
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(store, null, 2));
 }
 
 function loadTokens() {
@@ -142,7 +154,6 @@ let liveChatId           = null;
 let nextPageToken        = null;
 let nextPollIntervalMs   = null;
 let messageHistory       = [];
-let msgSeq               = 0;   // monotonic counter; each message gets a unique seq
 let isPolling            = false;
 let pollTimer            = null;
 let currentVideoId       = null;
@@ -196,7 +207,6 @@ async function fetchMessages() {
   }
 
   const newMessages = (res.data.items || []).map(item => ({
-    seq:         msgSeq++,
     id:          item.id,
     author:      item.authorDetails.displayName,
     authorPhoto: item.authorDetails.profileImageUrl,
@@ -364,22 +374,14 @@ app.get('/api/connect', requireAuth, async (req, res) => {
   }
 });
 
-// Cursor-based feed — multiple clients can poll independently.
-// Pass ?after=<seq> to get only messages newer than that seq.
-// Omit (or pass after=-1) to get the full history buffer (seed on first load).
-// Response includes serverSeq so clients can detect a server restart.
+// Timestamp-based feed — pass ?since=<unix_ms> to get only newer messages.
+// Omit (or since=0) to seed with the last 10 messages from history.
 app.get('/api/messages', requireAuth, (req, res) => {
-  const after    = parseInt(req.query.after ?? -1, 10);
-  const messages = after < 0
-    ? [...messageHistory]
-    : messageHistory.filter(m => m.seq > after);
-  res.json({
-    messages,
-    connected:  !!liveChatId,
-    searching:  isSearchingForStream,
-    videoId:    currentVideoId,
-    serverSeq:  msgSeq,
-  });
+  const since    = parseInt(req.query.since ?? 0, 10);
+  const messages = since > 0
+    ? messageHistory.filter(m => new Date(m.timestamp).getTime() > since)
+    : messageHistory.slice(-10);
+  res.json({ messages, connected: !!liveChatId, searching: isSearchingForStream, videoId: currentVideoId });
 });
 
 app.get('/api/history', requireAuth, (req, res) => {
@@ -387,13 +389,14 @@ app.get('/api/history', requireAuth, (req, res) => {
 });
 
 app.get('/api/settings', (req, res) => {
-  res.json(loadSettings());
+  res.json(loadSettings(req.query.profile || 'default'));
 });
 
 app.post('/api/settings', (req, res) => {
-  const current = loadSettings();
+  const profile = req.query.profile || 'default';
+  const current = loadSettings(profile);
   const updated = { ...current, ...req.body };
-  saveSettings(updated);
+  saveSettings(profile, updated);
   res.json(updated);
 });
 
