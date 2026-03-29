@@ -36,8 +36,10 @@ module.exports = {
   // Максимум повідомлень на екрані (старіші видаляються)
   MAX_MESSAGES_ON_SCREEN: 80,
 
-  // Скільки останніх повідомлень зберігати для нових підключень
-  HISTORY_SIZE: 10,
+  // Messages kept in the server-side ring buffer.
+  // All clients read from this via cursor (?after=seq), so it must be
+  // large enough that no client misses messages between polls.
+  HISTORY_SIZE: 500,
 
   // ── Шляхи (не змінювати якщо не переносиш папку) ─────────────
   TOKEN_FILE: 'tokens.json',

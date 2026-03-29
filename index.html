@@ -115,6 +115,36 @@
   /* ── OVERLAY MODE ── */
   body.overlay-mode #panel,
   body.overlay-mode #status-bar { display: none !important; }
+
+  /* ── STREAMER MODE ── */
+  body.streamer-mode { background: rgba(15,15,15,0.95); }
+  body.streamer-mode #panel { display: flex; }
+
+  body.streamer-mode .msg {
+    background: rgba(255,255,255,0.04);
+    border: none;
+    border-left: 4px solid rgba(255,255,255,0.12);
+    border-radius: 3px;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    animation: none;
+    padding: 4px 8px;
+  }
+  body.streamer-mode .msg.is-owner  { border-left-color: var(--owner); }
+  body.streamer-mode .msg.is-mod    { border-left-color: var(--mod); }
+  body.streamer-mode .msg.is-member { border-left-color: var(--member); }
+  body.streamer-mode .msg-author {
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: calc(13px * var(--font-scale));
+  }
+  body.streamer-mode .msg-text {
+    font-size: calc(14px * var(--font-scale));
+    text-shadow: none;
+    color: rgba(255,255,255,0.88);
+  }
+  body.streamer-mode .badge { font-size: calc(10px * var(--font-scale)); padding: 0 4px; }
+  body.streamer-mode .msg-time { font-size: calc(11px * var(--font-scale)); }
+  body.streamer-mode #messages-wrap { gap: 2px; }
 </style>
 </head>
 <body>
@@ -183,8 +213,11 @@ const SERVER   = 'http://localhost:3456';
 const POLL_MS  = 4000;
 const MAX_MSGS = 80;
 
-const isOverlay = new URLSearchParams(location.search).get('overlay') === '1';
+const params    = new URLSearchParams(location.search);
+const isOverlay = params.get('overlay') === '1';
+const profile   = params.get('profile') || 'default';
 if (isOverlay) document.body.classList.add('overlay-mode');
+if (profile === 'streamer') document.body.classList.add('streamer-mode');
 
 // ── AUTHOR COLORS ─────────────────────────────────────────────────────────────
 const AUTHOR_COLORS = Array.from({length: 30}, (_, i) =>
@@ -205,6 +238,7 @@ let pollInterval  = null;
 let totalMsgCount = 0;
 let authorized    = false;
 let connected     = false;
+let lastSeq       = -1;  // cursor: last received message seq; -1 = fetch all history
 
 // ── ELEMENTS ──────────────────────────────────────────────────────────────────
 const $dot       = document.getElementById('status-dot');
@@ -245,7 +279,7 @@ function onAuthorized() {
 
 async function logout() {
   await fetch(`${SERVER}/api/auth/logout`).catch(() => {});
-  authorized = false; connected = false;
+  authorized = false; connected = false; lastSeq = -1;
   stopPolling();
   $btnAuth.style.display   = 'inline-block';
   $btnLogout.style.display = 'none';
@@ -284,7 +318,7 @@ async function connectChat() {
 async function disconnectChat() {
   stopPolling();
   await fetch(`${SERVER}/api/disconnect`).catch(() => {});
-  connected = false; totalMsgCount = 0;
+  connected = false; totalMsgCount = 0; lastSeq = -1;
   $wrap.innerHTML = '';
   $wrap.appendChild($empty);
   $empty.style.display = '';
@@ -309,10 +343,15 @@ function stopPolling() {
 
 async function pollMessages() {
   try {
-    const res  = await fetch(`${SERVER}/api/messages`);
+    const res  = await fetch(`${SERVER}/api/messages?after=${lastSeq}`);
     const data = await res.json();
+
+    // Detect server restart (seq counter reset)
+    if (data.serverSeq !== undefined && lastSeq > data.serverSeq) lastSeq = -1;
+
     if (!data.connected && connected) {
       connected = false;
+      lastSeq   = -1;
       $btnConn.style.display = 'inline-block';
       $btnConn.disabled      = false;
       $btnDisc.style.display = 'none';
@@ -329,21 +368,14 @@ async function pollMessages() {
       $btnConn.style.display = 'none';
       $btnDisc.style.display = 'inline-block';
       $empty.style.display   = 'none';
-      await seedHistory();
     }
-    if (data.messages?.length) appendMessages(data.messages);
+    if (data.messages?.length) {
+      lastSeq = data.messages[data.messages.length - 1].seq;
+      appendMessages(data.messages);
+    }
   } catch {
     setStatus('error', 'Немає зʼєднання з локальним сервером');
   }
-}
-
-// ── HISTORY SEED ──────────────────────────────────────────────────────────────
-async function seedHistory() {
-  try {
-    const res  = await fetch(`${SERVER}/api/history`);
-    const data = await res.json();
-    if (data.messages?.length) appendMessages(data.messages);
-  } catch { /* ignore */ }
 }
 
 // ── RENDER MESSAGES ───────────────────────────────────────────────────────────
@@ -381,7 +413,7 @@ function appendMessages(msgs) {
     for (let i = 0; i < all.length - MAX_MSGS; i++) all[i].remove();
   }
 
-  $wrap.scrollTop = $wrap.scrollHeight;
+  requestAnimationFrame(() => { $wrap.scrollTop = $wrap.scrollHeight; });
   $msgCount.textContent = `${totalMsgCount} повід.`;
 }
 
@@ -455,8 +487,7 @@ async function init() {
       $btnConn.style.display = 'none';
       $btnDisc.style.display = 'inline-block';
       $empty.style.display   = 'none';
-      await seedHistory();
-      startPolling();
+      startPolling(); // first poll uses lastSeq=-1, seeds history automatically
     } else if (st.searching) {
       setStatus('loading', 'Шукаємо активний стрім...');
       $empty.querySelector('span').textContent = 'Очікуємо початку стріму...';

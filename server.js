@@ -141,8 +141,8 @@ function getAdaptivePollInterval() {
 let liveChatId           = null;
 let nextPageToken        = null;
 let nextPollIntervalMs   = null;
-let messageBuffer        = [];
 let messageHistory       = [];
+let msgSeq               = 0;   // monotonic counter; each message gets a unique seq
 let isPolling            = false;
 let pollTimer            = null;
 let currentVideoId       = null;
@@ -196,6 +196,7 @@ async function fetchMessages() {
   }
 
   const newMessages = (res.data.items || []).map(item => ({
+    seq:         msgSeq++,
     id:          item.id,
     author:      item.authorDetails.displayName,
     authorPhoto: item.authorDetails.profileImageUrl,
@@ -210,9 +211,6 @@ async function fetchMessages() {
   if (newMessages.length > 0) {
     log(`${newMessages.length} message(s) received. Quota used: ${quotaUsed}/${cfg.DAILY_QUOTA_LIMIT}.`);
   }
-
-  messageBuffer.push(...newMessages);
-  if (messageBuffer.length > 500) messageBuffer = messageBuffer.slice(-500);
 
   messageHistory.push(...newMessages);
   if (messageHistory.length > cfg.HISTORY_SIZE) messageHistory = messageHistory.slice(-cfg.HISTORY_SIZE);
@@ -266,7 +264,7 @@ async function autoConnect() {
   if (isPolling || liveChatId) return;
   isSearchingForStream = true;
   try {
-    messageBuffer = []; messageHistory = []; nextPageToken = null;
+    messageHistory = []; nextPageToken = null;
     log('Searching for active stream...');
     liveChatId = await findActiveLiveChatId();
     isSearchingForStream = false;
@@ -355,7 +353,7 @@ app.get('/api/auth/logout', (req, res) => {
 app.get('/api/connect', requireAuth, async (req, res) => {
   try {
     stopPolling();
-    messageBuffer = []; nextPageToken = null;
+    messageHistory = []; nextPageToken = null;
     liveChatId = await findActiveLiveChatId();
     startPolling();
     logOk(`Manual connect: ${currentVideoId}`);
@@ -366,10 +364,22 @@ app.get('/api/connect', requireAuth, async (req, res) => {
   }
 });
 
+// Cursor-based feed — multiple clients can poll independently.
+// Pass ?after=<seq> to get only messages newer than that seq.
+// Omit (or pass after=-1) to get the full history buffer (seed on first load).
+// Response includes serverSeq so clients can detect a server restart.
 app.get('/api/messages', requireAuth, (req, res) => {
-  const messages = [...messageBuffer];
-  messageBuffer  = [];
-  res.json({ messages, connected: !!liveChatId, videoId: currentVideoId });
+  const after    = parseInt(req.query.after ?? -1, 10);
+  const messages = after < 0
+    ? [...messageHistory]
+    : messageHistory.filter(m => m.seq > after);
+  res.json({
+    messages,
+    connected:  !!liveChatId,
+    searching:  isSearchingForStream,
+    videoId:    currentVideoId,
+    serverSeq:  msgSeq,
+  });
 });
 
 app.get('/api/history', requireAuth, (req, res) => {
@@ -391,7 +401,7 @@ app.get('/api/disconnect', (req, res) => {
   stopPolling();
   if (autoConnectTimer) { clearTimeout(autoConnectTimer); autoConnectTimer = null; }
   isSearchingForStream = false;
-  liveChatId = null; nextPageToken = null; messageBuffer = []; currentVideoId = null;
+  liveChatId = null; nextPageToken = null; messageHistory = []; currentVideoId = null;
   res.json({ ok: true });
 });
 
