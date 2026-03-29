@@ -152,7 +152,7 @@ function Start-Server {
         return
     }
 
-    $proc.Id | Out-File $PidFile -Encoding utf8NoBOM
+    $proc.Id | Out-File $PidFile -Encoding ascii
 
     $started = $false
     for ($i = 0; $i -lt 8; $i++) {
