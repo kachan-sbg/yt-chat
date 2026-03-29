@@ -1,5 +1,5 @@
 # YT Live Chat - Start/Stop/Restart Server
-# Usage: powershell -ExecutionPolicy Bypass -File start.ps1 [-Stop] [-Restart] [-Status] [-AddStartup] [-RemStartup]
+# Usage: powershell -ExecutionPolicy Bypass -File start.ps1 [-Stop] [-Restart] [-Status] [-AddStartup] [-RemStartup] [-Silent]
 #
 # See HOWTO.md for setup instructions.
 
@@ -8,7 +8,8 @@ param(
     [switch]$Restart,
     [switch]$Status,
     [switch]$AddStartup,
-    [switch]$RemStartup
+    [switch]$RemStartup,
+    [switch]$Silent    # suppress interactive pause; used by Task Scheduler / startup
 )
 
 $AppDir      = $PSScriptRoot
@@ -178,7 +179,7 @@ function Add-Startup {
     $scriptPath = Join-Path $AppDir "start.ps1"
     $action  = New-ScheduledTaskAction `
         -Execute "powershell.exe" `
-        -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`"" `
+        -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" -Silent" `
         -WorkingDirectory $AppDir
     $trigger  = New-ScheduledTaskTrigger -AtLogon
     $settings = New-ScheduledTaskSettingsSet `
@@ -257,3 +258,7 @@ if ($RemStartup) { Remove-Startup; Write-Hr; Write-Host ""; exit 0 }
 Start-Server
 Write-Hr
 Write-Host ""
+if (-not $Silent) {
+    Write-Host "  Press any key to close this window..." -ForegroundColor DarkGray
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+}
