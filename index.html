@@ -118,7 +118,7 @@
 
   /* ── STREAMER MODE ── */
   body.streamer-mode { background: rgba(0,0,0,0.25); }
-  body.streamer-mode #panel { display: flex; }
+  /* panel shown via .visible class, added on init for streamer mode */
   body.streamer-mode #messages-wrap { gap: 1px; }
 
   body.streamer-mode .msg {
@@ -498,6 +498,8 @@ async function init() {
     setStatus('', 'Не авторизовано');
   }
 }
+
+if (profile === 'streamer') document.getElementById('panel').classList.add('visible');
 
 document.addEventListener('keydown', e => {
   if (e.altKey && e.code === 'KeyH') {
