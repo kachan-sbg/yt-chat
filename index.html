@@ -227,7 +227,9 @@ if (profile === 'streamer') document.body.classList.add('streamer-mode');
 
 // ── AUTHOR COLORS ─────────────────────────────────────────────────────────────
 const AUTHOR_COLORS = Array.from({length: 30}, (_, i) =>
-  `hsl(${(i * 12) % 360}, 70%, 82%)`
+  profile === 'streamer'
+    ? `hsl(${(i * 12) % 360}, 90%, 62%)`   // vivid, contrasting on dark bg
+    : `hsl(${(i * 12) % 360}, 70%, 82%)`   // pastel for OBS overlay
 );
 const authorColorMap = {};
 let colorIndex = 0;
