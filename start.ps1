@@ -135,33 +135,21 @@ function Start-Server {
 
     Write-Info "Starting server..."
 
-    $pinfo = New-Object System.Diagnostics.ProcessStartInfo
-    $pinfo.FileName               = "node"
-    $pinfo.Arguments              = "`"$(Join-Path $AppDir 'server.js')`""
-    $pinfo.WorkingDirectory       = $AppDir
-    $pinfo.RedirectStandardOutput = $true
-    $pinfo.RedirectStandardError  = $true
-    $pinfo.UseShellExecute        = $false
-    $pinfo.CreateNoWindow         = $true
-
-    $proc = New-Object System.Diagnostics.Process
-    $proc.StartInfo = $pinfo
-
-    $logStream = [System.IO.StreamWriter]::new($LogFile, $true, [System.Text.Encoding]::UTF8)
-    $logStream.AutoFlush = $true
-
-    $proc.add_OutputDataReceived({
-        param($sender, $e)
-        if ($e.Data) { $logStream.WriteLine($e.Data) }
-    })
-    $proc.add_ErrorDataReceived({
-        param($sender, $e)
-        if ($e.Data) { $logStream.WriteLine("ERR: $($e.Data)") }
-    })
-
-    $proc.Start() | Out-Null
-    $proc.BeginOutputReadLine()
-    $proc.BeginErrorReadLine()
+    # Launch node via cmd.exe so stdout+stderr are redirected at the OS level.
+    # In-process PowerShell event handlers (add_OutputDataReceived) die when this
+    # script exits and cannot survive a background process — OS-level redirection
+    # (cmd >> file 2>&1) is the only reliable approach on Windows.
+    $serverJs = Join-Path $AppDir 'server.js'
+    try {
+        $proc = Start-Process -FilePath "cmd.exe" `
+            -ArgumentList "/c node `"$serverJs`" >> `"$LogFile`" 2>&1" `
+            -WorkingDirectory $AppDir `
+            -WindowStyle Hidden `
+            -PassThru -ErrorAction Stop
+    } catch {
+        Write-Err "Failed to launch server: $_"
+        return
+    }
 
     $proc.Id | Out-File $PidFile -Encoding utf8NoBOM
 
@@ -171,12 +159,10 @@ function Start-Server {
         if (Test-PortBusy) { $started = $true; break }
         if ($proc.HasExited) {
             Write-Err "Server exited with an error. See: $LogFile"
-            $logStream.Close()
+            Remove-Item $PidFile -ErrorAction SilentlyContinue
             return
         }
     }
-
-    $logStream.Close()
 
     if ($started) {
         Write-Ok "Server started (PID $($proc.Id))"
