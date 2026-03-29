@@ -242,10 +242,18 @@ function Show-Status {
     Write-Hr; Write-Host ""
 }
 
+# ── Pause helper (used on interactive exit) ───────────────────────────────────
+function Wait-UserInput {
+    if (-not $Silent) {
+        Write-Host ""
+        Read-Host "  Press Enter to close"
+    }
+}
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 Write-Header
-if (-not (Test-Node))        { exit 1 }
-if (-not (Test-Dependencies)){ exit 1 }
+if (-not (Test-Node))        { Wait-UserInput; exit 1 }
+if (-not (Test-Dependencies)){ Wait-UserInput; exit 1 }
 Write-Hr
 
 if ($Stop)       { Stop-Server;    Write-Hr; Write-Host ""; exit 0 }
@@ -257,8 +265,4 @@ if ($RemStartup) { Remove-Startup; Write-Hr; Write-Host ""; exit 0 }
 # Default: start
 Start-Server
 Write-Hr
-Write-Host ""
-if (-not $Silent) {
-    Write-Host "  Press any key to close this window..." -ForegroundColor DarkGray
-    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-}
+Wait-UserInput
