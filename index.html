@@ -315,7 +315,7 @@ function updateQuota(quota) {
   const parts = [`<span class="ql">${used}/${limit}u</span>`];
   if (stats) {
     for (const [action, { calls, units }] of Object.entries(stats)) {
-      parts.push(`<span>${action}: ${calls}×${units}u</span>`);
+      parts.push(`<span>${action}: ${calls}×${Math.round(units/calls)}u</span>`);
     }
   }
   parts.push(`<span class="ql">↺ ${resetInH}h</span>`);

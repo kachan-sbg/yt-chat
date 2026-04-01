@@ -32,6 +32,10 @@ module.exports = {
   // Як часто шукати активний стрім якщо він ще не запущений (мс).
   AUTO_CONNECT_RETRY_MS: 30_000,
 
+  // Poll interval when connected to a scheduled (upcoming) stream that hasn't gone live yet.
+  // Pre-stream chat is low-traffic; no need to poll as fast as during a live broadcast.
+  SCHEDULED_POLL_INTERVAL_MS: 60_000,
+
   // ── Overlay ───────────────────────────────────────────────────
   // Максимум повідомлень на екрані (старіші видаляються)
   MAX_MESSAGES_ON_SCREEN: 80,

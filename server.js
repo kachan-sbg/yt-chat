@@ -93,6 +93,7 @@ let nextPageToken        = null;
 let nextPollIntervalMs   = null;
 let messageHistory       = [];
 let isPolling            = false;
+let isStreamLive         = false; // false = scheduled/upcoming, true = actively broadcasting
 let pollTimer            = null;
 let currentVideoId       = null;
 let autoConnectTimer     = null;
@@ -212,8 +213,9 @@ function getAdaptivePollInterval() {
     return null;
   }
 
-  const base     = nextPollIntervalMs ?? cfg.POLL_INTERVAL_MS;
-  const interval = Math.max(base, optimalMs);
+  const minInterval = isStreamLive ? cfg.POLL_INTERVAL_MS : cfg.SCHEDULED_POLL_INTERVAL_MS;
+  const base     = nextPollIntervalMs ?? minInterval;
+  const interval = Math.max(base, optimalMs, minInterval);
 
   if (optimalMs > base + 2000) {
     logWarn(`Quota low: ${remaining} units left, ~${maxCalls} calls, ${hoursLeft}h until reset. Slowing poll to ${Math.round(interval / 1000)}s.`);
@@ -229,6 +231,7 @@ function buildStatusPayload() {
   return {
     authorized:  !!(creds?.access_token || creds?.refresh_token),
     connected:   !!liveChatId,
+    streamLive:  isStreamLive,
     searching:   isSearchingForStream,
     polling:     isPolling,
     videoId:     currentVideoId,
@@ -300,6 +303,7 @@ async function findActiveLiveChatId(action = 'search') {
   addQuota(1, action);
 
   let items = (res.data.items || []).filter(i => i.snippet?.liveChatId);
+  let foundLive = items.length > 0;
 
   if (items.length === 0) {
     res = await youtube.liveBroadcasts.list({
@@ -316,7 +320,25 @@ async function findActiveLiveChatId(action = 'search') {
 
   const broadcast = items[0];
   currentVideoId  = broadcast.id;
+  isStreamLive    = foundLive;
+  if (!isStreamLive) log('Connected to scheduled (upcoming) stream — using slow poll until live.');
   return broadcast.snippet.liveChatId;
+}
+
+async function checkIfStreamWentLive() {
+  if (!currentVideoId) return;
+  try {
+    const res = await youtube.liveBroadcasts.list({ part: ['status'], id: [currentVideoId] });
+    addQuota(1, 'status');
+    const status = res.data.items?.[0]?.status?.lifeCycleStatus;
+    if (status === 'live' || status === 'liveStarting') {
+      isStreamLive = true;
+      logOk('Stream is now live — switching to normal poll interval.');
+      broadcastStatus();
+    }
+  } catch (e) {
+    logErr(`Status check failed: ${e.message}`);
+  }
 }
 
 async function fetchMessages() {
@@ -365,11 +387,12 @@ function startPolling() {
   const tick = async () => {
     if (!isPolling) return;
     try {
+      if (!isStreamLive) await checkIfStreamWentLive();
       await fetchMessages();
     } catch (e) {
       logErr(`Poll error: ${e.message}`);
       if (e.message?.includes('liveChatEnded')) {
-        isPolling = false; liveChatId = null; currentVideoId = null;
+        isPolling = false; liveChatId = null; currentVideoId = null; isStreamLive = false;
         log('Stream ended. Waiting for next stream...');
         broadcastStatus();
         if (wsClients.size > 0) scheduleAutoConnect();
@@ -525,7 +548,7 @@ app.get('/api/disconnect', (req, res) => {
   stopPolling();
   if (autoConnectTimer) { clearTimeout(autoConnectTimer); autoConnectTimer = null; }
   isSearchingForStream = false;
-  liveChatId = null; nextPageToken = null; messageHistory = []; currentVideoId = null;
+  liveChatId = null; nextPageToken = null; messageHistory = []; currentVideoId = null; isStreamLive = false;
   broadcastStatus();
   res.json({ ok: true });
 });

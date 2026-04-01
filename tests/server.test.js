@@ -32,6 +32,7 @@ jest.mock('../config', () => ({
   CLIENT_SECRET: 'test-secret',
   PORT: 0,
   POLL_INTERVAL_MS: 10_000,
+  SCHEDULED_POLL_INTERVAL_MS: 60_000,
   DAILY_QUOTA_LIMIT: 10_000,
   AUTO_CONNECT_RETRY_MS: 30_000,
   MAX_MESSAGES_ON_SCREEN: 80,
@@ -202,5 +203,73 @@ describe('Settings API', () => {
     // Named profile should still get defaults, not the migrated values
     const res = await request(app).get('/api/settings?profile=obs');
     expect(res.body).toEqual({ opacity: 0.08, blur: 3, fontSize: 'normal' });
+  });
+});
+
+// ── Stream live detection ─────────────────────────────────────────────────────
+
+describe('Stream live detection', () => {
+  let mockYoutube, mockOAuth2;
+
+  beforeAll(() => {
+    const { google } = jest.requireMock('googleapis');
+    mockYoutube = google.youtube();
+    mockOAuth2  = new google.auth.OAuth2();
+  });
+
+  beforeEach(async () => {
+    await request(app).get('/api/disconnect');
+    mockOAuth2.credentials = { access_token: 'fake-token' };
+  });
+
+  afterEach(async () => {
+    await request(app).get('/api/disconnect');
+    mockOAuth2.credentials = {};
+    // Restore default: no items found
+    mockYoutube.liveBroadcasts.list.mockResolvedValue({ data: { items: [] } });
+  });
+
+  test('/api/status includes streamLive: false initially', async () => {
+    const { body } = await request(app).get('/api/status');
+    expect(body.streamLive).toBe(false);
+  });
+
+  test('connecting to an active broadcast sets streamLive: true', async () => {
+    mockYoutube.liveBroadcasts.list.mockResolvedValueOnce({
+      data: { items: [{ id: 'vid1', snippet: { liveChatId: 'chat1' } }] },
+    });
+
+    const res = await request(app).get('/api/connect');
+    expect(res.status).toBe(200);
+
+    const { body } = await request(app).get('/api/status');
+    expect(body.streamLive).toBe(true);
+    expect(body.connected).toBe(true);
+  });
+
+  test('connecting to an upcoming (scheduled) broadcast sets streamLive: false', async () => {
+    // First call (active query) returns empty, second (upcoming query) returns item
+    mockYoutube.liveBroadcasts.list
+      .mockResolvedValueOnce({ data: { items: [] } })
+      .mockResolvedValueOnce({ data: { items: [{ id: 'vid2', snippet: { liveChatId: 'chat2' } }] } });
+
+    const res = await request(app).get('/api/connect');
+    expect(res.status).toBe(200);
+
+    const { body } = await request(app).get('/api/status');
+    expect(body.streamLive).toBe(false);
+    expect(body.connected).toBe(true);
+  });
+
+  test('disconnect resets streamLive to false', async () => {
+    mockYoutube.liveBroadcasts.list.mockResolvedValueOnce({
+      data: { items: [{ id: 'vid1', snippet: { liveChatId: 'chat1' } }] },
+    });
+    await request(app).get('/api/connect');
+
+    await request(app).get('/api/disconnect');
+    const { body } = await request(app).get('/api/status');
+    expect(body.streamLive).toBe(false);
+    expect(body.connected).toBe(false);
   });
 });
