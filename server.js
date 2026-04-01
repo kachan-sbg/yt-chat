@@ -2,10 +2,14 @@ const express    = require('express');
 const cors       = require('cors');
 const fs         = require('fs');
 const path       = require('path');
+const http       = require('http');
+const { WebSocketServer } = require('ws');
 const { google } = require('googleapis');
 const cfg        = require('./config');
 
-const app = express();
+const app    = express();
+const server = http.createServer(app);
+const wss    = new WebSocketServer({ server, path: '/ws' });
 
 if (cfg.CLIENT_ID === 'YOUR_CLIENT_ID_HERE') {
   console.error('\n  ✗ CLIENT_ID не налаштовано в config.js\n');
@@ -34,7 +38,6 @@ const DEFAULT_SETTINGS = { opacity: 0.08, blur: 3, fontSize: 'normal' };
 function loadSettings(profile = 'default') {
   try {
     const data  = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
-    // Migrate old flat format { opacity, blur, fontSize } → { default: {...} }
     const store = data.opacity !== undefined ? { default: data } : data;
     return { ...DEFAULT_SETTINGS, ...(store[profile] || {}) };
   } catch {
@@ -74,17 +77,72 @@ oauth2Client.on('tokens', (tokens) => {
 
 const hasTokens = loadTokens();
 
+function hasCredentials() {
+  const c = oauth2Client.credentials;
+  return !!(c?.access_token || c?.refresh_token);
+}
+
+// ── STATE ─────────────────────────────────────────────────────────────────────
+// Quota
+let quotaUsed       = 0;
+let quotaLog        = []; // { action, units, ts }[]
+let quotaResetTimer = null;
+// Polling
+let liveChatId           = null;
+let nextPageToken        = null;
+let nextPollIntervalMs   = null;
+let messageHistory       = [];
+let isPolling            = false;
+let pollTimer            = null;
+let currentVideoId       = null;
+let autoConnectTimer     = null;
+let isSearchingForStream = false;
+// WebSocket clients
+const wsClients = new Set();
+
+const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+
 // ── QUOTA TRACKING ────────────────────────────────────────────────────────────
-// YouTube Data API v3 quota resets daily at midnight Pacific Time ≈ 08:00 UTC.
+// Quota resets daily at midnight Pacific Time ≈ 08:00 UTC.
 // Costs: liveChatMessages.list = 5 units, liveBroadcasts.list = 1 unit.
 
-let quotaUsed       = 0;
-let quotaResetTimer = null;
+const QUOTA_STATE_PATH = path.join(__dirname, 'quota-state.json');
+
+function quotaDateKey() {
+  // Approximate Pacific Time date (UTC-8; good enough for reset-day tracking)
+  const d = new Date(Date.now() - 8 * 3600_000);
+  return d.toISOString().slice(0, 10); // "2026-03-31"
+}
+
+function loadQuotaState() {
+  try {
+    const data = JSON.parse(fs.readFileSync(QUOTA_STATE_PATH, 'utf8'));
+    if (data.date === quotaDateKey()) {
+      quotaUsed = data.used || 0;
+      quotaLog  = data.log  || [];
+      logOk(`Quota restored: ${quotaUsed}/${cfg.DAILY_QUOTA_LIMIT} units used today.`);
+    } else {
+      logOk('New quota day — counter reset.');
+      saveQuotaState();
+    }
+  } catch { /* no state file yet, start fresh */ }
+}
+
+function saveQuotaState() {
+  try {
+    fs.writeFileSync(QUOTA_STATE_PATH, JSON.stringify({
+      date: quotaDateKey(),
+      used: quotaUsed,
+      log:  quotaLog.slice(-2000),
+    }, null, 2));
+  } catch (e) {
+    logErr(`Failed to save quota state: ${e.message}`);
+  }
+}
 
 function getMsUntilQuotaReset() {
   const now = Date.now();
   const d   = new Date(now);
-  // Midnight Pacific ≈ 08:00 UTC (PST) / 07:00 UTC (PDT). Using 08:00 as safe approximation.
   let reset = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 8, 0, 0, 0);
   if (reset <= now) reset += 86_400_000;
   return reset - now;
@@ -95,25 +153,40 @@ function scheduleQuotaReset() {
   const ms = getMsUntilQuotaReset();
   quotaResetTimer = setTimeout(() => {
     quotaUsed = 0;
+    quotaLog  = [];
+    saveQuotaState();
     logOk(`Quota reset. Daily limit (${cfg.DAILY_QUOTA_LIMIT} units) restored.`);
+    broadcastStatus();
     scheduleQuotaReset();
-    // Resume polling if a stream is connected but polling was paused for quota
-    if (liveChatId && !isPolling) {
+    if (wsClients.size > 0 && liveChatId && !isPolling) {
       log('Resuming polling after quota reset...');
       startPolling();
     }
   }, ms);
 }
 
-function addQuota(units) {
+// action: 'poll' | 'search' | 'connect'
+function addQuota(units, action) {
   quotaUsed += units;
+  quotaLog.push({ action, units, ts: new Date().toISOString() });
+  saveQuotaState();
+}
+
+function getQuotaStats() {
+  const stats = {};
+  for (const { action, units } of quotaLog) {
+    if (!stats[action]) stats[action] = { calls: 0, units: 0 };
+    stats[action].calls++;
+    stats[action].units += units;
+  }
+  return stats;
 }
 
 function getQuotaInfo() {
   const remaining  = cfg.DAILY_QUOTA_LIMIT - quotaUsed;
   const msLeft     = getMsUntilQuotaReset();
-  const hoursLeft  = Math.round(msLeft / 360_000) / 10; // 1 decimal
-  const maxCalls   = Math.floor(remaining / 5);          // 5 units per poll
+  const hoursLeft  = Math.round(msLeft / 360_000) / 10;
+  const maxCalls   = Math.floor(remaining / 5);
   const optimalMs  = maxCalls > 0 ? Math.ceil(msLeft / maxCalls) : Infinity;
   return { remaining, hoursLeft, maxCalls, optimalMs };
 }
@@ -127,7 +200,7 @@ function logQuotaEstimate() {
   log(`Quota: ${quotaUsed}/${cfg.DAILY_QUOTA_LIMIT} used | ${remaining} remaining | resets in ${hoursLeft}h`);
   log(`At ${currentInterval}s interval: ~${callsPerHour} calls/h, ~${unitsPerHour} units/h → quota lasts ~${hoursUntilDry.toFixed(1)}h`);
   if (hoursUntilDry < hoursLeft) {
-    logWarn(`Quota may run out before reset! Consider raising POLL_INTERVAL_MS in config.js.`);
+    logWarn('Quota may run out before reset! Consider raising POLL_INTERVAL_MS in config.js.');
   }
 }
 
@@ -136,7 +209,7 @@ function getAdaptivePollInterval() {
 
   if (remaining < 5) {
     logWarn(`Quota exhausted (${quotaUsed}/${cfg.DAILY_QUOTA_LIMIT}). Polling paused. Resets in ${hoursLeft}h.`);
-    return null; // caller should pause polling until reset
+    return null;
   }
 
   const base     = nextPollIntervalMs ?? cfg.POLL_INTERVAL_MS;
@@ -149,28 +222,82 @@ function getAdaptivePollInterval() {
   return interval;
 }
 
-// ── STATE ─────────────────────────────────────────────────────────────────────
-let liveChatId           = null;
-let nextPageToken        = null;
-let nextPollIntervalMs   = null;
-let messageHistory       = [];
-let isPolling            = false;
-let pollTimer            = null;
-let currentVideoId       = null;
-let autoConnectTimer     = null;
-let isSearchingForStream = false;
+// ── STATUS PAYLOAD ────────────────────────────────────────────────────────────
+function buildStatusPayload() {
+  const creds = oauth2Client.credentials;
+  const { remaining, hoursLeft, maxCalls } = getQuotaInfo();
+  return {
+    authorized:  !!(creds?.access_token || creds?.refresh_token),
+    connected:   !!liveChatId,
+    searching:   isSearchingForStream,
+    polling:     isPolling,
+    videoId:     currentVideoId,
+    clients:     wsClients.size,
+    tokenExpiry: creds?.expiry_date ? new Date(creds.expiry_date).toLocaleTimeString('uk-UA') : null,
+    quota: {
+      used:     quotaUsed,
+      limit:    cfg.DAILY_QUOTA_LIMIT,
+      remaining,
+      maxCalls,
+      resetInH: hoursLeft,
+      stats:    getQuotaStats(),
+    },
+  };
+}
 
-const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+// ── WEBSOCKET ─────────────────────────────────────────────────────────────────
+function broadcast(data) {
+  if (wsClients.size === 0) return;
+  const msg = JSON.stringify(data);
+  for (const ws of wsClients) {
+    if (ws.readyState === 1 /* OPEN */) {
+      ws.send(msg);
+    } else {
+      wsClients.delete(ws);
+    }
+  }
+}
+
+function broadcastStatus() {
+  broadcast({ type: 'status', ...buildStatusPayload() });
+}
+
+wss.on('connection', (ws) => {
+  wsClients.add(ws);
+  log(`WS client connected (${wsClients.size} total)`);
+
+  // Send current state immediately to the new client
+  ws.send(JSON.stringify({ type: 'status', ...buildStatusPayload() }));
+
+  // Trigger auto-connect if authorized and idle
+  if (hasCredentials() && !isPolling && !liveChatId && !isSearchingForStream && !autoConnectTimer) {
+    log('Client connected — starting auto-connect...');
+    autoConnect();
+  }
+
+  ws.on('close', () => {
+    wsClients.delete(ws);
+    log(`WS client disconnected (${wsClients.size} remaining)`);
+    if (wsClients.size === 0) {
+      stopPolling();
+      if (autoConnectTimer) { clearTimeout(autoConnectTimer); autoConnectTimer = null; }
+      isSearchingForStream = false;
+      log('No clients — polling paused to save quota.');
+    }
+  });
+
+  ws.on('error', () => wsClients.delete(ws));
+});
 
 // ── YOUTUBE CALLS ─────────────────────────────────────────────────────────────
-async function findActiveLiveChatId() {
+async function findActiveLiveChatId(action = 'search') {
   let res = await youtube.liveBroadcasts.list({
     part: ['snippet', 'status'],
     broadcastStatus: 'active',
     broadcastType: 'all',
     maxResults: 5,
   });
-  addQuota(1);
+  addQuota(1, action);
 
   let items = (res.data.items || []).filter(i => i.snippet?.liveChatId);
 
@@ -181,7 +308,7 @@ async function findActiveLiveChatId() {
       broadcastType: 'all',
       maxResults: 5,
     });
-    addQuota(1);
+    addQuota(1, action);
     items = (res.data.items || []).filter(i => i.snippet?.liveChatId);
   }
 
@@ -199,7 +326,7 @@ async function fetchMessages() {
   if (nextPageToken) params.pageToken = nextPageToken;
 
   const res = await youtube.liveChatMessages.list(params);
-  addQuota(5);
+  addQuota(5, 'poll');
 
   nextPageToken = res.data.nextPageToken;
   if (res.data.pollingIntervalMillis) {
@@ -220,10 +347,13 @@ async function fetchMessages() {
 
   if (newMessages.length > 0) {
     log(`${newMessages.length} message(s) received. Quota used: ${quotaUsed}/${cfg.DAILY_QUOTA_LIMIT}.`);
+    broadcast({ type: 'messages', messages: newMessages });
   }
 
   messageHistory.push(...newMessages);
   if (messageHistory.length > cfg.HISTORY_SIZE) messageHistory = messageHistory.slice(-cfg.HISTORY_SIZE);
+
+  broadcastStatus();
 }
 
 // ── POLLING ───────────────────────────────────────────────────────────────────
@@ -241,7 +371,8 @@ function startPolling() {
       if (e.message?.includes('liveChatEnded')) {
         isPolling = false; liveChatId = null; currentVideoId = null;
         log('Stream ended. Waiting for next stream...');
-        scheduleAutoConnect();
+        broadcastStatus();
+        if (wsClients.size > 0) scheduleAutoConnect();
         return;
       }
     }
@@ -249,7 +380,8 @@ function startPolling() {
     const interval = getAdaptivePollInterval();
     if (interval === null) {
       isPolling = false;
-      return; // quotaResetTimer will resume polling
+      broadcastStatus();
+      return; // quotaResetTimer will resume
     }
 
     const intervalSec = Math.round(interval / 1000);
@@ -273,17 +405,24 @@ function stopPolling() {
 async function autoConnect() {
   if (isPolling || liveChatId) return;
   isSearchingForStream = true;
+  broadcastStatus();
   try {
     messageHistory = []; nextPageToken = null;
     log('Searching for active stream...');
-    liveChatId = await findActiveLiveChatId();
+    liveChatId = await findActiveLiveChatId('search');
     isSearchingForStream = false;
     logOk(`Connected to stream: ${currentVideoId}`);
+    broadcastStatus();
     startPolling();
   } catch (e) {
     isSearchingForStream = false;
     log(`Stream not found (${e.message}). Retry in ${cfg.AUTO_CONNECT_RETRY_MS / 1000}s...`);
-    autoConnectTimer = setTimeout(autoConnect, cfg.AUTO_CONNECT_RETRY_MS);
+    broadcastStatus();
+    if (wsClients.size > 0) {
+      autoConnectTimer = setTimeout(autoConnect, cfg.AUTO_CONNECT_RETRY_MS);
+    } else {
+      log('No clients connected — auto-connect search stopped.');
+    }
   }
 }
 
@@ -307,23 +446,7 @@ function requireAuth(req, res, next) {
 
 // ── API ROUTES ────────────────────────────────────────────────────────────────
 app.get('/api/status', (req, res) => {
-  const creds = oauth2Client.credentials;
-  const { remaining, hoursLeft, maxCalls } = getQuotaInfo();
-  res.json({
-    authorized:  !!(creds?.access_token || creds?.refresh_token),
-    connected:   !!liveChatId,
-    searching:   isSearchingForStream,
-    polling:     isPolling,
-    videoId:     currentVideoId,
-    tokenExpiry: creds?.expiry_date ? new Date(creds.expiry_date).toLocaleTimeString('uk-UA') : null,
-    quota: {
-      used:      quotaUsed,
-      limit:     cfg.DAILY_QUOTA_LIMIT,
-      remaining,
-      maxCalls,
-      resetInH:  hoursLeft,
-    },
-  });
+  res.json(buildStatusPayload());
 });
 
 app.get('/auth/start', (req, res) => {
@@ -339,6 +462,7 @@ app.get('/auth/callback', async (req, res) => {
     oauth2Client.setCredentials(tokens);
     fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
     logOk('OAuth callback: tokens saved.');
+    broadcastStatus();
     res.send(`<html><body style="font-family:sans-serif;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center"><div><div style="font-size:48px">✅</div><h2>Authorization successful!</h2><script>setTimeout(()=>window.close(),2000)</script></div></body></html>`);
   } catch (e) {
     logErr(`OAuth callback error: ${e.message}`);
@@ -357,6 +481,7 @@ app.get('/api/auth/logout', (req, res) => {
   try { fs.unlinkSync(TOKEN_PATH); } catch {}
   liveChatId = null; currentVideoId = null;
   logWarn('Logged out and tokens cleared.');
+  broadcastStatus();
   res.json({ ok: true });
 });
 
@@ -364,12 +489,14 @@ app.get('/api/connect', requireAuth, async (req, res) => {
   try {
     stopPolling();
     messageHistory = []; nextPageToken = null;
-    liveChatId = await findActiveLiveChatId();
+    liveChatId = await findActiveLiveChatId('connect');
     startPolling();
     logOk(`Manual connect: ${currentVideoId}`);
+    broadcastStatus();
     res.json({ ok: true, liveChatId, videoId: currentVideoId });
   } catch (e) {
     logErr(`Connect failed: ${e.message}`);
+    broadcastStatus();
     res.status(500).json({ error: e.message });
   }
 });
@@ -399,21 +526,22 @@ app.get('/api/disconnect', (req, res) => {
   if (autoConnectTimer) { clearTimeout(autoConnectTimer); autoConnectTimer = null; }
   isSearchingForStream = false;
   liveChatId = null; nextPageToken = null; messageHistory = []; currentVideoId = null;
+  broadcastStatus();
   res.json({ ok: true });
 });
 
 // ── START ─────────────────────────────────────────────────────────────────────
-app.listen(cfg.PORT, () => {
+server.listen(cfg.PORT, () => {
   console.log(`\n  ✓ YT Chat Server: http://localhost:${cfg.PORT}`);
   console.log(`  ✓ Overlay:        http://localhost:${cfg.PORT}/index.html\n`);
 
+  loadQuotaState();
   scheduleQuotaReset();
 
   if (!hasTokens) {
     logWarn('No tokens found. Run: node auth.js');
   } else {
     logQuotaEstimate();
-    log('Starting auto-connect...');
-    autoConnect();
+    log('Ready. Polling starts when overlay connects via WebSocket.');
   }
 });

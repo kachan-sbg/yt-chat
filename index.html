@@ -53,6 +53,29 @@
   .btn-connect { background: var(--gulf-blue);   color: #fff; }
   .btn-sm      { background: rgba(255,255,255,.08); color: var(--text-dim); font-size: 11px; padding: 3px 9px; }
 
+  /* ── QUOTA ROW ── */
+  #row-quota { flex-direction: column; align-items: flex-start; gap: 4px; }
+
+  .quota-bar-wrap {
+    width: 100%; height: 3px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 2px; overflow: hidden;
+  }
+  .quota-bar-fill {
+    height: 100%; border-radius: 2px;
+    background: var(--gulf-blue);
+    transition: width .5s, background .5s;
+  }
+  .quota-bar-fill.warn  { background: var(--gulf-orange); }
+  .quota-bar-fill.crit  { background: #ef4444; }
+
+  .quota-text {
+    font-size: 10px; color: var(--text-dim);
+    display: flex; gap: 8px; flex-wrap: wrap;
+  }
+  .quota-text span { white-space: nowrap; }
+  .quota-text .ql  { color: rgba(255,255,255,.55); }
+
   /* ── SETTINGS PANEL ── */
   #settings {
     display: none;
@@ -118,7 +141,6 @@
 
   /* ── STREAMER MODE ── */
   body.streamer-mode { background: rgba(0,0,0,0.25); }
-  /* panel shown via .visible class, added on init for streamer mode */
   body.streamer-mode #messages-wrap { gap: 1px; }
 
   body.streamer-mode .msg {
@@ -135,7 +157,6 @@
   body.streamer-mode .msg.is-mod    { border-left-color: var(--mod); }
   body.streamer-mode .msg.is-member { border-left-color: var(--member); }
 
-  /* Inline layout: Author: message text on one line */
   body.streamer-mode .msg-header { display: inline; margin: 0; }
   body.streamer-mode .msg-author {
     font-family: system-ui, -apple-system, sans-serif;
@@ -175,6 +196,12 @@
       <button class="btn btn-connect" id="btn-connect" onclick="connectChat()">▶ Підключити</button>
       <button class="btn btn-sm"      id="btn-disconn" onclick="disconnectChat()" style="display:none">✕ Відключити</button>
       <button class="btn btn-sm" onclick="toggleSettings()" id="btn-settings" style="margin-left:auto">⚙</button>
+    </div>
+
+    <!-- QUOTA STATS -->
+    <div class="panel-row" id="row-quota" style="display:none">
+      <div class="quota-bar-wrap"><div class="quota-bar-fill" id="quota-bar"></div></div>
+      <div class="quota-text" id="quota-text"></div>
     </div>
 
     <!-- SETTINGS -->
@@ -222,8 +249,8 @@
 </div>
 <script>
 // ── CONFIG ────────────────────────────────────────────────────────────────────
-const SERVER   = 'http://localhost:3456';
-const POLL_MS  = 4000;
+const SERVER  = 'http://localhost:3456';
+const WS_URL  = 'ws://localhost:3456/ws';
 const MAX_MSGS = 20;
 
 const profile = new URLSearchParams(location.search).get('profile') || 'default';
@@ -233,8 +260,8 @@ if (profile === 'streamer') document.body.classList.add('streamer-mode');
 // ── AUTHOR COLORS ─────────────────────────────────────────────────────────────
 const AUTHOR_COLORS = Array.from({length: 30}, (_, i) =>
   profile === 'streamer'
-    ? `hsl(${(i * 12) % 360}, 90%, 62%)`   // vivid, contrasting on dark bg
-    : `hsl(${(i * 12) % 360}, 70%, 82%)`   // pastel for OBS overlay
+    ? `hsl(${(i * 12) % 360}, 90%, 62%)`
+    : `hsl(${(i * 12) % 360}, 70%, 82%)`
 );
 const authorColorMap = {};
 let colorIndex = 0;
@@ -247,11 +274,13 @@ function getAuthorColor(author) {
 }
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
-let pollInterval  = null;
-let totalMsgCount = 0;
-let authorized    = false;
-let connected     = false;
-const seenIds = new Set(); // deduplicates messages across polls
+let totalMsgCount    = 0;
+let authorized       = false;
+let connected        = false;
+let wsReconnectDelay = 1000;
+let wsReconnectTimer = null;
+let ws               = null;
+const seenIds = new Set();
 
 // ── ELEMENTS ──────────────────────────────────────────────────────────────────
 const $dot       = document.getElementById('status-dot');
@@ -264,6 +293,9 @@ const $btnLogout = document.getElementById('btn-logout');
 const $rowConn   = document.getElementById('row-connect');
 const $btnConn   = document.getElementById('btn-connect');
 const $btnDisc   = document.getElementById('btn-disconn');
+const $rowQuota  = document.getElementById('row-quota');
+const $quotaBar  = document.getElementById('quota-bar');
+const $quotaText = document.getElementById('quota-text');
 
 // ── STATUS HELPER ─────────────────────────────────────────────────────────────
 function setStatus(state, text) {
@@ -271,41 +303,119 @@ function setStatus(state, text) {
   $statusTx.textContent = text;
 }
 
+// ── QUOTA DISPLAY ─────────────────────────────────────────────────────────────
+function updateQuota(quota) {
+  if (!quota) return;
+  const { used, limit, resetInH, stats } = quota;
+  const pct = Math.min(100, (used / limit) * 100);
+
+  $quotaBar.style.width = pct + '%';
+  $quotaBar.className = 'quota-bar-fill' + (pct >= 90 ? ' crit' : pct >= 70 ? ' warn' : '');
+
+  const parts = [`<span class="ql">${used}/${limit}u</span>`];
+  if (stats) {
+    for (const [action, { calls, units }] of Object.entries(stats)) {
+      parts.push(`<span>${action}: ${calls}×${units}u</span>`);
+    }
+  }
+  parts.push(`<span class="ql">↺ ${resetInH}h</span>`);
+  $quotaText.innerHTML = parts.join('');
+  $rowQuota.style.display = '';
+}
+
+// ── WEBSOCKET ─────────────────────────────────────────────────────────────────
+function connectWS() {
+  if (ws) { ws.onclose = null; ws.onerror = null; ws.close(); }
+
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    wsReconnectDelay = 1000;
+    if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+    // Status arrives immediately from server via 'status' message
+  };
+
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'messages') appendMessages(data.messages);
+    if (data.type === 'status')   applyServerStatus(data);
+  };
+
+  ws.onclose = () => {
+    setStatus('error', 'Сервер не запущено · npm start');
+    wsReconnectTimer = setTimeout(connectWS, wsReconnectDelay);
+    wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30_000);
+  };
+
+  ws.onerror = () => {}; // onclose fires after onerror
+}
+
+// ── SERVER STATUS → UI ────────────────────────────────────────────────────────
+function applyServerStatus(st) {
+  updateQuota(st.quota);
+
+  if (!st.authorized) {
+    authorized = false; connected = false;
+    $btnAuth.style.display   = 'inline-block';
+    $btnLogout.style.display = 'none';
+    $rowConn.style.display   = 'none';
+    $btnConn.style.display   = 'inline-block';
+    $btnConn.disabled        = false;
+    $btnDisc.style.display   = 'none';
+    setStatus('', 'Не авторизовано');
+    return;
+  }
+
+  if (!authorized) {
+    authorized = true;
+    $btnAuth.style.display   = 'none';
+    $btnLogout.style.display = 'inline-block';
+    $rowConn.style.display   = 'flex';
+  }
+
+  if (st.connected && !connected) {
+    connected = true;
+    setStatus('live', `Live · ${st.videoId || ''}`);
+    $btnConn.style.display = 'none';
+    $btnConn.disabled      = false;
+    $btnDisc.style.display = 'inline-block';
+    $empty.style.display   = 'none';
+  } else if (!st.connected && connected) {
+    connected = false;
+    $btnConn.style.display = 'inline-block';
+    $btnConn.disabled      = false;
+    $btnDisc.style.display = 'none';
+  }
+
+  if (!st.connected && st.searching) {
+    setStatus('loading', 'Шукаємо активний стрім...');
+    $empty.style.display = '';
+    $empty.querySelector('span').textContent = 'Очікуємо початку стріму...';
+  } else if (!st.connected && !st.searching) {
+    setStatus('authed', 'Авторизовано · Натисни Підключити або запусти стрім');
+    $empty.style.display = '';
+    $empty.querySelector('span').textContent = 'Натисни «Підключити» щоб почати';
+  } else if (st.connected) {
+    setStatus('live', `Live · ${st.videoId || ''}`);
+  }
+}
+
 // ── AUTH ──────────────────────────────────────────────────────────────────────
 function startAuth() {
   window.open(`${SERVER}/auth/start`, '_blank', 'width=500,height=600');
   setStatus('loading', 'Чекаємо авторизації...');
-  const checker = setInterval(async () => {
-    const st = await getStatus();
-    if (st?.authorized) { clearInterval(checker); onAuthorized(); }
-  }, 2000);
-}
-
-function onAuthorized() {
-  authorized = true;
-  $btnAuth.style.display   = 'none';
-  $btnLogout.style.display = 'inline-block';
-  $rowConn.style.display   = 'flex';
-  setStatus('authed', 'Авторизовано · Запусти стрім і натисни Підключити');
-  $empty.querySelector('span').textContent = 'Натисни «Підключити» щоб почати';
+  // Server broadcasts status update after OAuth callback — WS will pick it up
 }
 
 async function logout() {
   await fetch(`${SERVER}/api/auth/logout`).catch(() => {});
-  authorized = false; connected = false; seenIds.clear();
-  stopPolling();
-  $btnAuth.style.display   = 'inline-block';
-  $btnLogout.style.display = 'none';
-  $rowConn.style.display   = 'none';
-  $btnConn.style.display   = 'inline-block';
-  $btnDisc.style.display   = 'none';
+  authorized = false; connected = false; seenIds.clear(); totalMsgCount = 0;
   $wrap.innerHTML = '';
   $wrap.appendChild($empty);
   $empty.style.display = '';
   $empty.querySelector('span').textContent = 'Авторизуйся і підключи стрім';
   $msgCount.textContent = '';
-  totalMsgCount = 0;
-  setStatus('', 'Не авторизовано');
+  // Server broadcasts new status — WS will update UI
 }
 
 // ── CONNECT ───────────────────────────────────────────────────────────────────
@@ -316,12 +426,7 @@ async function connectChat() {
     const res  = await fetch(`${SERVER}/api/connect`);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
-    connected = true;
-    setStatus('live', `Live · ${data.videoId || ''}`);
-    $btnConn.style.display = 'none';
-    $btnDisc.style.display = 'inline-block';
-    $empty.style.display   = 'none';
-    startPolling();
+    // Server broadcasts status — WS handles UI update
   } catch (e) {
     setStatus('error', e.message);
     $btnConn.disabled = false;
@@ -329,59 +434,13 @@ async function connectChat() {
 }
 
 async function disconnectChat() {
-  stopPolling();
   await fetch(`${SERVER}/api/disconnect`).catch(() => {});
   connected = false; totalMsgCount = 0; seenIds.clear();
   $wrap.innerHTML = '';
   $wrap.appendChild($empty);
   $empty.style.display = '';
-  $empty.querySelector('span').textContent = 'Натисни «Підключити» щоб почати';
-  $btnConn.style.display = 'inline-block';
-  $btnConn.disabled      = false;
-  $btnDisc.style.display = 'none';
-  $msgCount.textContent  = '';
-  setStatus('authed', 'Відключено');
-}
-
-// ── POLLING ───────────────────────────────────────────────────────────────────
-function startPolling() {
-  stopPolling();
-  pollMessages();
-  pollInterval = setInterval(pollMessages, POLL_MS);
-}
-
-function stopPolling() {
-  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
-}
-
-async function pollMessages() {
-  try {
-    const res  = await fetch(`${SERVER}/api/messages`);
-    const data = await res.json();
-
-    if (!data.connected && connected) {
-      connected = false;
-      $btnConn.style.display = 'inline-block';
-      $btnConn.disabled      = false;
-      $btnDisc.style.display = 'none';
-    }
-    if (!data.connected && data.searching) {
-      setStatus('loading', 'Шукаємо активний стрім...');
-      $empty.style.display = '';
-      $empty.querySelector('span').textContent = 'Очікуємо початку стріму...';
-      return;
-    }
-    if (data.connected && !connected) {
-      connected = true;
-      setStatus('live', `Live · ${data.videoId || ''}`);
-      $btnConn.style.display = 'none';
-      $btnDisc.style.display = 'inline-block';
-      $empty.style.display   = 'none';
-    }
-    if (data.messages?.length) appendMessages(data.messages);
-  } catch {
-    setStatus('error', 'Немає зʼєднання з локальним сервером');
-  }
+  $msgCount.textContent = '';
+  // Server broadcasts status — WS handles UI update
 }
 
 // ── RENDER MESSAGES ───────────────────────────────────────────────────────────
@@ -467,45 +526,13 @@ function applySetting(type) {
   if (type === 'blur')    saveSetting({ blur:    parseFloat(document.getElementById('s-blur').value) });
 }
 
-function setFontSize(key) {
-  saveSetting({ fontSize: key });
-}
+function setFontSize(key) { saveSetting({ fontSize: key }); }
 
 function toggleSettings() {
   document.getElementById('settings').classList.toggle('visible');
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
-async function getStatus() {
-  try {
-    const res = await fetch(`${SERVER}/api/status`);
-    return await res.json();
-  } catch { return null; }
-}
-
-async function init() {
-  const st = await getStatus();
-  if (!st) { setStatus('error', 'Сервер не запущено · npm start'); return; }
-
-  if (st.authorized) {
-    onAuthorized();
-    if (st.connected) {
-      connected = true;
-      setStatus('live', `Live · ${st.videoId || ''}`);
-      $btnConn.style.display = 'none';
-      $btnDisc.style.display = 'inline-block';
-      $empty.style.display   = 'none';
-      startPolling(); // first poll uses lastSeq=-1, seeds history automatically
-    } else if (st.searching) {
-      setStatus('loading', 'Шукаємо активний стрім...');
-      $empty.querySelector('span').textContent = 'Очікуємо початку стріму...';
-      startPolling();
-    }
-  } else {
-    setStatus('', 'Не авторизовано');
-  }
-}
-
 if (profile === 'streamer') document.getElementById('panel').classList.add('visible');
 
 document.addEventListener('keydown', e => {
@@ -520,7 +547,7 @@ fetch(`${SERVER}/api/settings?profile=${profile}`)
   .then(applySettings)
   .catch(() => applySettings({ opacity: 0.08, blur: 3, fontSize: 'normal' }));
 
-init();
+connectWS();
 </script>
 </body>
 </html>
