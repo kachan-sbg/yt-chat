@@ -272,10 +272,15 @@ wss.on('connection', (ws) => {
   // Send current state immediately to the new client
   ws.send(JSON.stringify({ type: 'status', ...buildStatusPayload() }));
 
-  // Trigger auto-connect if authorized and idle
-  if (hasCredentials() && !isPolling && !liveChatId && !isSearchingForStream && !autoConnectTimer) {
-    log('Client connected — starting auto-connect...');
-    autoConnect();
+  // Resume or start polling when a client connects
+  if (hasCredentials() && !isPolling && !isSearchingForStream) {
+    if (liveChatId) {
+      log('Client connected — resuming polling...');
+      startPolling();
+    } else if (!autoConnectTimer) {
+      log('Client connected — starting auto-connect...');
+      autoConnect();
+    }
   }
 
   ws.on('close', () => {
@@ -340,6 +345,7 @@ async function checkIfStreamWentLive() {
     logErr(`Status check failed: ${e.message}`);
   }
 }
+
 
 async function fetchMessages() {
   if (!liveChatId) return;
