@@ -531,17 +531,21 @@ app.get('/api/disconnect', (req, res) => {
 });
 
 // ── START ─────────────────────────────────────────────────────────────────────
-server.listen(cfg.PORT, () => {
-  console.log(`\n  ✓ YT Chat Server: http://localhost:${cfg.PORT}`);
-  console.log(`  ✓ Overlay:        http://localhost:${cfg.PORT}/index.html\n`);
+if (require.main === module) {
+  server.listen(cfg.PORT, () => {
+    console.log(`\n  ✓ YT Chat Server: http://localhost:${cfg.PORT}`);
+    console.log(`  ✓ Overlay:        http://localhost:${cfg.PORT}/index.html\n`);
 
-  loadQuotaState();
-  scheduleQuotaReset();
+    loadQuotaState();
+    scheduleQuotaReset();
 
-  if (!hasTokens) {
-    logWarn('No tokens found. Run: node auth.js');
-  } else {
-    logQuotaEstimate();
-    log('Ready. Polling starts when overlay connects via WebSocket.');
-  }
-});
+    if (!hasTokens) {
+      logWarn('No tokens found. Run: node auth.js');
+    } else {
+      logQuotaEstimate();
+      log('Ready. Polling starts when overlay connects via WebSocket.');
+    }
+  });
+}
+
+module.exports = { app, server, wss };
